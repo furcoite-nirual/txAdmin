@@ -14,7 +14,7 @@ const txLicenseBannerFile = licenseBanner();
 
 /**
  * Extracts the version from the GITHUB_REF env var and detects if pre-release
- * NOTE: to run locally: `GITHUB_REF="refs/tags/v7.3.0" npm run build`
+ * NOTE: to run locally: `GITHUB_REF="refs/tags/v9.9.9" npm run build`
  */
 const getPublishVersion = (isOptional) => {
     const workflowRef = process.env.GITHUB_REF;
@@ -154,11 +154,7 @@ class txAdminRunner {
     }
 
     killServer() {
-        if (this.isRebootingPaused) {
-            console.log('[RUNNER] Kill request received, scheduling for unpause.');
-            this.hasPendingReboot = true;
-            return;
-        }
+        if (this.isRebootingPaused) return;
         try {
             if (this.fxChild !== null) {
                 console.log('[RUNNER] killing process.');
@@ -170,8 +166,12 @@ class txAdminRunner {
         }
     }
 
-    toggleRebootPause(forceDisable) {
-        if (forceDisable && !this.isRebootingPaused) return;
+    removeRebootPause() {
+        console.log('[RUNNER] Removing reboot pause.');
+        this.isRebootingPaused = false;
+    }
+
+    toggleRebootPause() {
         if (this.isRebootingPaused) {
             console.log('[RUNNER] Unpausing reboot.');
             this.isRebootingPaused = false;
@@ -230,7 +230,7 @@ const runDevTask = async (txVersion, preReleaseExpiration) => {
     process.stdin.on('data', (data) => {
         const cmd = data.toString().toLowerCase().trim();
         if (cmd === 'r' || cmd === 'rr') {
-            txInstance.toggleRebootPause(true);
+            txInstance.removeRebootPause();
             console.log(`[BUILDER] Restarting due to stdin request.`);
             txInstance.killServer();
             txInstance.spawnServer();
