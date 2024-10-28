@@ -19,7 +19,8 @@ import ScrollDownAddon from "./ScrollDownAddon";
 import terminalOptions from "./xtermOptions";
 import './xtermOverrides.css';
 import '@xterm/xterm/css/xterm.css';
-import { getSocket, openExternalLink, tsToLocaleTimeString } from '@/lib/utils';
+import { getSocket } from '@/lib/utils';
+import { openExternalLink } from '@/lib/navigation';
 import { handleHotkeyEvent } from '@/lib/hotkeyEventListener';
 import { txToast } from '@/components/TxToaster';
 
@@ -29,7 +30,7 @@ const keyDebounceTime = 150; //ms
 //Yoinked from the internet, no good source
 const rtlRangeRegex = /[\u0591-\u07FF\uFB1D-\uFDFD\uFE70-\uFEFC]{3,}/; //ignoring anything less than 3 characters
 
-//Yoinked from core/components/Logger/FXServerLogger/index.ts
+//Yoinked from core/modules/Logger/FXServerLogger/index.ts
 const regexControls = /[\x00-\x08\x0B-\x1A\x1C-\x1F\x7F]|(?:\x1B\[|\x9B)[\d;]+[@-K]/g;
 const regexColors = /\x1B[^m]*?m/g;
 const cleanTermOutput = (data: string) => {

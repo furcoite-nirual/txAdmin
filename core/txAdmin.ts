@@ -4,33 +4,33 @@ import slash from 'slash';
 
 import { txEnv } from '@core/globalData';
 
-import { printBanner } from '@core/extras/banner';
-import setupProfile from '@core/extras/setupProfile';
+import { printBanner } from './boot/banner';
+import setupProfile from './boot/setupProfile';
 
-import AdminVault from '@core/components/AdminVault';
-import ConfigVault from '@core/components/ConfigVault';
-import DiscordBot from '@core/components/DiscordBot';
-import DynamicAds from '@core/components/DynamicAds';
-import FxRunner from '@core/components/FxRunner';
-import Logger from '@core/components/Logger';
-import HealthMonitor from '@core/components/HealthMonitor';
-import Scheduler from '@core/components/Scheduler';
-import StatsManager from '@core/components/StatsManager';
-import Translator from '@core/components/Translator';
-import WebServer from '@core/components/WebServer';
-import ResourcesManager from '@core/components/ResourcesManager';
-import PlayerlistManager from '@core/components/PlayerlistManager';
-import PlayerDatabase from '@core/components/PlayerDatabase';
-import PersistentCache from '@core/components/PersistentCache';
-import UpdateChecker from '@core/components/UpdateChecker';
+import AdminVault from '@modules/AdminVault';
+import ConfigVault from '@modules/ConfigVault';
+import DiscordBot from '@modules/DiscordBot';
+import DynamicAds from '@modules/DynamicAds';
+import FxRunner from '@modules/FxRunner';
+import Logger from '@modules/Logger';
+import HealthMonitor from '@modules/HealthMonitor';
+import Scheduler from '@modules/Scheduler';
+import StatsManager from '@modules/StatsManager';
+import Translator from '@modules/Translator';
+import WebServer from '@modules/WebServer';
+import ResourcesManager from '@modules/ResourcesManager';
+import PlayerlistManager from '@modules/PlayerlistManager';
+import PlayerDatabase from '@modules/PlayerDatabase';
+import PersistentCache from '@modules/PersistentCache';
+import CfxUpdateChecker from '@modules/CfxUpdateChecker';
 
-import consoleFactory from '@extras/console';
-import { getHostData } from './webroutes/diagnostics/diagnosticsFuncs';
+import consoleFactory from '@lib/console';
+import { getHostData } from '@lib/diagnostics';
 const console = consoleFactory(`v${txEnv.txAdminVersion}`);
 
 
 //Helpers
-const cleanPath = (x: string) => { return slash(path.normalize(x)); };
+const cleanPath = (x: string) => slash(path.normalize(x));
 
 
 // Long ago I wanted to replace this with dependency injection.
@@ -52,7 +52,7 @@ const globalsInternal: Record<string, any> = {
     playerlistManager: null,
     playerDatabase: null,
     deployer: null,
-    updateChecker: null,
+    cfxUpdateChecker: null,
     info: {},
 
     //FIXME: settings:save webroute cannot call txAdmin.refreshConfig for now
@@ -83,7 +83,7 @@ export default class TxAdmin {
     playerlistManager;
     playerDatabase;
     persistentCache;
-    updateChecker;
+    cfxUpdateChecker;
 
     //Runtime
     readonly info: {
@@ -197,8 +197,8 @@ export default class TxAdmin {
             this.persistentCache = new PersistentCache(this);
             globalsInternal.persistentCache = this.persistentCache;
 
-            this.updateChecker = new UpdateChecker(this);
-            globalsInternal.updateChecker = this.updateChecker;
+            this.cfxUpdateChecker = new CfxUpdateChecker(this);
+            globalsInternal.cfxUpdateChecker = this.cfxUpdateChecker;
         } catch (error) {
             console.error(`Error starting main components:`);
             console.dir(error);
