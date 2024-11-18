@@ -1,17 +1,16 @@
 const modulename = 'WebServer:PlayerCheckJoin';
 import cleanPlayerName from '@shared/cleanPlayerName';
 import { GenericApiErrorResp } from '@shared/genericApiTypes';
-import { DatabaseActionType, DatabaseWhitelistApprovalsType } from '@modules/PlayerDatabase/databaseTypes';
+import { DatabaseActionBanType, DatabaseActionType, DatabaseWhitelistApprovalsType } from '@modules/Database/databaseTypes';
 import { anyUndefined, now } from '@lib/misc';
-import { filterPlayerHwids, parsePlayerIds } from '@lib/player/idUtils';
+import { filterPlayerHwids, parsePlayerIds, shortenId, summarizeIdsArray } from '@lib/player/idUtils';
 import type { PlayerIdsObjectType } from "@shared/otherTypes";
 import xssInstancer from '@lib/xss';
 import playerResolver from '@lib/player/playerResolver';
 import humanizeDuration, { Unit } from 'humanize-duration';
 import consoleFactory from '@lib/console';
-import { TimeCounter } from '@modules/StatsManager/statsUtils';
+import { TimeCounter } from '@modules/Metrics/statsUtils';
 import { InitializedCtx } from '@modules/WebServer/ctxTypes';
-import TxAdmin from '@core/txAdmin';
 const console = consoleFactory(modulename);
 const xss = xssInstancer();
 
@@ -47,7 +46,7 @@ const rejectMessageTemplate = (title: string, content: string) => {
 }
 
 const prepCustomMessage = (msg: string) => {
-    if(!msg) return '';
+    if (!msg) return '';
     return '<br>' + msg.trim().replaceAll(/\n/g, '<br>');
 }
 
@@ -70,8 +69,8 @@ export default async function PlayerCheckJoin(ctx: InitializedCtx) {
 
     //If checking not required at all
     if (
-        !ctx.txAdmin.playerDatabase.config.onJoinCheckBan
-        && ctx.txAdmin.playerDatabase.config.whitelistMode === 'disabled'
+        !txConfig.playerDatabase.onJoinCheckBan
+        && txConfig.playerDatabase.whitelistMode === 'disabled'
     ) {
         return sendTypedResp({ allow: true });
     }
@@ -98,36 +97,36 @@ export default async function PlayerCheckJoin(ctx: InitializedCtx) {
 
     try {
         // If ban checking enabled
-        if (ctx.txAdmin.playerDatabase.config.onJoinCheckBan) {
+        if (txConfig.playerDatabase.onJoinCheckBan) {
             const checkTime = new TimeCounter();
-            const result = checkBan(ctx.txAdmin, validIdsArray, validIdsObject, validHwidsArray);
-            ctx.txAdmin.statsManager.txRuntime.banCheckTime.count(checkTime.stop().milliseconds);
+            const result = checkBan(validIdsArray, validIdsObject, validHwidsArray);
+            txCore.metrics.txRuntime.banCheckTime.count(checkTime.stop().milliseconds);
             if (!result.allow) return sendTypedResp(result);
         }
 
         //Checking whitelist
-        if (ctx.txAdmin.playerDatabase.config.whitelistMode === 'adminOnly') {
+        if (txConfig.playerDatabase.whitelistMode === 'adminOnly') {
             const checkTime = new TimeCounter();
-            const result = await checkAdminOnlyMode(ctx.txAdmin, validIdsArray, validIdsObject, playerName);
-            ctx.txAdmin.statsManager.txRuntime.whitelistCheckTime.count(checkTime.stop().milliseconds);
+            const result = await checkAdminOnlyMode(validIdsArray, validIdsObject, playerName);
+            txCore.metrics.txRuntime.whitelistCheckTime.count(checkTime.stop().milliseconds);
             if (!result.allow) return sendTypedResp(result);
 
-        } else if (ctx.txAdmin.playerDatabase.config.whitelistMode === 'approvedLicense') {
+        } else if (txConfig.playerDatabase.whitelistMode === 'approvedLicense') {
             const checkTime = new TimeCounter();
-            const result = await checkApprovedLicense(ctx.txAdmin, validIdsArray, validIdsObject, validHwidsArray, playerName);
-            ctx.txAdmin.statsManager.txRuntime.whitelistCheckTime.count(checkTime.stop().milliseconds);
+            const result = await checkApprovedLicense(validIdsArray, validIdsObject, validHwidsArray, playerName);
+            txCore.metrics.txRuntime.whitelistCheckTime.count(checkTime.stop().milliseconds);
             if (!result.allow) return sendTypedResp(result);
 
-        } else if (ctx.txAdmin.playerDatabase.config.whitelistMode === 'guildMember') {
+        } else if (txConfig.playerDatabase.whitelistMode === 'guildMember') {
             const checkTime = new TimeCounter();
-            const result = await checkGuildMember(ctx.txAdmin, validIdsArray, validIdsObject, playerName);
-            ctx.txAdmin.statsManager.txRuntime.whitelistCheckTime.count(checkTime.stop().milliseconds);
+            const result = await checkGuildMember(validIdsArray, validIdsObject, playerName);
+            txCore.metrics.txRuntime.whitelistCheckTime.count(checkTime.stop().milliseconds);
             if (!result.allow) return sendTypedResp(result);
 
-        } else if (ctx.txAdmin.playerDatabase.config.whitelistMode === 'guildRoles') {
+        } else if (txConfig.playerDatabase.whitelistMode === 'guildRoles') {
             const checkTime = new TimeCounter();
-            const result = await checkGuildRoles(ctx.txAdmin, validIdsArray, validIdsObject, playerName);
-            ctx.txAdmin.statsManager.txRuntime.whitelistCheckTime.count(checkTime.stop().milliseconds);
+            const result = await checkGuildRoles(validIdsArray, validIdsObject, playerName);
+            txCore.metrics.txRuntime.whitelistCheckTime.count(checkTime.stop().milliseconds);
             if (!result.allow) return sendTypedResp(result);
         }
 
@@ -147,37 +146,36 @@ export default async function PlayerCheckJoin(ctx: InitializedCtx) {
  * Checks if the player is banned
  */
 function checkBan(
-    txAdmin: TxAdmin,
     validIdsArray: string[],
     validIdsObject: PlayerIdsObjectType,
     validHwidsArray: string[]
 ): AllowRespType | DenyRespType {
     // Check active bans on matching identifiers
     const ts = now();
-    const filter = (action: DatabaseActionType) => {
+    const filter = (action: DatabaseActionType): action is DatabaseActionBanType => {
         return (
             action.type === 'ban'
             && (!action.expiration || action.expiration > ts)
             && (!action.revocation.timestamp)
         );
     };
-    const activeBans = txAdmin.playerDatabase.getRegisteredActions(validIdsArray, validHwidsArray, filter);
+    const activeBans = txCore.database.actions.findMany(validIdsArray, validHwidsArray, filter);
     if (activeBans.length) {
         const ban = activeBans[0];
 
         //Translation keys
         const textKeys = {
-            title_permanent: txAdmin.translator.t('ban_messages.reject.title_permanent'),
-            title_temporary: txAdmin.translator.t('ban_messages.reject.title_temporary'),
-            label_expiration: txAdmin.translator.t('ban_messages.reject.label_expiration'),
-            label_date: txAdmin.translator.t('ban_messages.reject.label_date'),
-            label_author: txAdmin.translator.t('ban_messages.reject.label_author'),
-            label_reason: txAdmin.translator.t('ban_messages.reject.label_reason'),
-            label_id: txAdmin.translator.t('ban_messages.reject.label_id'),
-            note_multiple_bans: txAdmin.translator.t('ban_messages.reject.note_multiple_bans'),
-            note_diff_license: txAdmin.translator.t('ban_messages.reject.note_diff_license'),
+            title_permanent: txCore.translator.t('ban_messages.reject.title_permanent'),
+            title_temporary: txCore.translator.t('ban_messages.reject.title_temporary'),
+            label_expiration: txCore.translator.t('ban_messages.reject.label_expiration'),
+            label_date: txCore.translator.t('ban_messages.reject.label_date'),
+            label_author: txCore.translator.t('ban_messages.reject.label_author'),
+            label_reason: txCore.translator.t('ban_messages.reject.label_reason'),
+            label_id: txCore.translator.t('ban_messages.reject.label_id'),
+            note_multiple_bans: txCore.translator.t('ban_messages.reject.note_multiple_bans'),
+            note_diff_license: txCore.translator.t('ban_messages.reject.note_diff_license'),
         };
-        const language = txAdmin.translator.t('$meta.humanizer_language');
+        const language = txCore.translator.t('$meta.humanizer_language');
 
         //Ban data
         let title;
@@ -196,13 +194,13 @@ function checkBan(
             title = textKeys.title_permanent;
         }
         const banDate = new Date(ban.timestamp * 1000).toLocaleString(
-            txAdmin.translator.canonical,
+            txCore.translator.canonical,
             { dateStyle: 'medium', timeStyle: 'medium' }
         )
 
         //Ban author
         let authorLine = '';
-        if (!txAdmin.globalConfig.hideAdminInPunishments) {
+        if (!txConfig.global.hideAdminInPunishments) {
             authorLine = `<strong>${textKeys.label_author}:</strong> ${xss(ban.author)} <br>`;
         }
 
@@ -224,9 +222,24 @@ function checkBan(
             <strong>${textKeys.label_reason}:</strong> ${xss(ban.reason)} <br>
             <strong>${textKeys.label_id}:</strong> <codeid>${ban.id}</codeid> <br>
             ${authorLine}
-            ${prepCustomMessage(txAdmin.playerDatabase.config.banRejectionMessage)}
+            ${prepCustomMessage(txConfig.playerDatabase.banRejectionMessage)}
             <span style="font-style: italic;">${note}</span>`
         );
+
+        //Send serverlog message
+        const matchingIds = ban.ids.filter(id => validIdsArray.includes(id));
+        const matchingHwids = ('hwids' in ban && ban.hwids)
+            ? ban.hwids.filter(hw => validHwidsArray.includes(hw))
+            : [];
+        const combined = [...matchingIds, ...matchingHwids];
+        const summarizedIds = summarizeIdsArray(combined);
+        const loggerReason = `active ban (${ban.id}) for identifiers ${summarizedIds}`;
+        txCore.logger.server.write([{
+            src: 'tx',
+            type: 'playerJoinDenied',
+            ts,
+            data: { reason: loggerReason }
+        }]);
 
         return { allow: false, reason };
     } else {
@@ -239,15 +252,14 @@ function checkBan(
  * Checks if the player is an admin
  */
 async function checkAdminOnlyMode(
-    txAdmin: TxAdmin,
     validIdsArray: string[],
     validIdsObject: PlayerIdsObjectType,
     playerName: string
 ): Promise<AllowRespType | DenyRespType> {
     const textKeys = {
-        mode_title: txAdmin.translator.t('whitelist_messages.admin_only.mode_title'),
-        insufficient_ids: txAdmin.translator.t('whitelist_messages.admin_only.insufficient_ids'),
-        deny_message: txAdmin.translator.t('whitelist_messages.admin_only.deny_message'),
+        mode_title: txCore.translator.t('whitelist_messages.admin_only.mode_title'),
+        insufficient_ids: txCore.translator.t('whitelist_messages.admin_only.insufficient_ids'),
+        deny_message: txCore.translator.t('whitelist_messages.admin_only.deny_message'),
     };
 
     //Check if fivem/discord ids are available
@@ -262,14 +274,14 @@ async function checkAdminOnlyMode(
     }
 
     //Looking for admin
-    const admin = txAdmin.adminVault.getAdminByIdentifiers(validIdsArray);
+    const admin = txCore.adminStore.getAdminByIdentifiers(validIdsArray);
     if (admin) return { allow: true };
 
     //Prepare rejection message
     const reason = rejectMessageTemplate(
         textKeys.mode_title,
         `${textKeys.deny_message} <br>
-        ${prepCustomMessage(txAdmin.playerDatabase.config.whitelistRejectionMessage)}`
+        ${prepCustomMessage(txConfig.playerDatabase.whitelistRejectionMessage)}`
     );
     return { allow: false, reason };
 }
@@ -279,17 +291,16 @@ async function checkAdminOnlyMode(
  * Checks if the player is a discord guild member
  */
 async function checkGuildMember(
-    txAdmin: TxAdmin,
     validIdsArray: string[],
     validIdsObject: PlayerIdsObjectType,
     playerName: string
 ): Promise<AllowRespType | DenyRespType> {
-    const guildname = `<guildname>${txAdmin.discordBot.guildName}</guildname>`;
+    const guildname = `<guildname>${txCore.discordBot.guildName}</guildname>`;
     const textKeys = {
-        mode_title: txAdmin.translator.t('whitelist_messages.guild_member.mode_title'),
-        insufficient_ids: txAdmin.translator.t('whitelist_messages.guild_member.insufficient_ids'),
-        deny_title: txAdmin.translator.t('whitelist_messages.guild_member.deny_title'),
-        deny_message: txAdmin.translator.t('whitelist_messages.guild_member.deny_message', {guildname}),
+        mode_title: txCore.translator.t('whitelist_messages.guild_member.mode_title'),
+        insufficient_ids: txCore.translator.t('whitelist_messages.guild_member.insufficient_ids'),
+        deny_title: txCore.translator.t('whitelist_messages.guild_member.deny_title'),
+        deny_message: txCore.translator.t('whitelist_messages.guild_member.deny_message', { guildname }),
     };
 
     //Check if discord id is available
@@ -306,7 +317,7 @@ async function checkGuildMember(
     //Resolving member
     let errorTitle, errorMessage;
     try {
-        const { isMember, memberRoles } = await txAdmin.discordBot.resolveMemberRoles(validIdsObject.discord);
+        const { isMember, memberRoles } = await txCore.discordBot.resolveMemberRoles(validIdsObject.discord);
         if (isMember) {
             return { allow: true };
         } else {
@@ -322,7 +333,7 @@ async function checkGuildMember(
     const reason = rejectMessageTemplate(
         errorTitle,
         `${errorMessage} <br>
-        ${prepCustomMessage(txAdmin.playerDatabase.config.whitelistRejectionMessage)}`
+        ${prepCustomMessage(txConfig.playerDatabase.whitelistRejectionMessage)}`
     );
     return { allow: false, reason };
 }
@@ -332,19 +343,18 @@ async function checkGuildMember(
  * Checks if the player has specific discord guild roles
  */
 async function checkGuildRoles(
-    txAdmin: TxAdmin,
     validIdsArray: string[],
     validIdsObject: PlayerIdsObjectType,
     playerName: string
 ): Promise<AllowRespType | DenyRespType> {
-    const guildname = `<guildname>${txAdmin.discordBot.guildName}</guildname>`;
+    const guildname = `<guildname>${txCore.discordBot.guildName}</guildname>`;
     const textKeys = {
-        mode_title: txAdmin.translator.t('whitelist_messages.guild_roles.mode_title'),
-        insufficient_ids: txAdmin.translator.t('whitelist_messages.guild_roles.insufficient_ids'),
-        deny_notmember_title: txAdmin.translator.t('whitelist_messages.guild_roles.deny_notmember_title'),
-        deny_notmember_message: txAdmin.translator.t('whitelist_messages.guild_roles.deny_notmember_message', {guildname}),
-        deny_noroles_title: txAdmin.translator.t('whitelist_messages.guild_roles.deny_noroles_title'),
-        deny_noroles_message: txAdmin.translator.t('whitelist_messages.guild_roles.deny_noroles_message', {guildname}),
+        mode_title: txCore.translator.t('whitelist_messages.guild_roles.mode_title'),
+        insufficient_ids: txCore.translator.t('whitelist_messages.guild_roles.insufficient_ids'),
+        deny_notmember_title: txCore.translator.t('whitelist_messages.guild_roles.deny_notmember_title'),
+        deny_notmember_message: txCore.translator.t('whitelist_messages.guild_roles.deny_notmember_message', { guildname }),
+        deny_noroles_title: txCore.translator.t('whitelist_messages.guild_roles.deny_noroles_title'),
+        deny_noroles_message: txCore.translator.t('whitelist_messages.guild_roles.deny_noroles_message', { guildname }),
     };
 
     //Check if discord id is available
@@ -361,9 +371,9 @@ async function checkGuildRoles(
     //Resolving member
     let errorTitle, errorMessage;
     try {
-        const { isMember, memberRoles } = await txAdmin.discordBot.resolveMemberRoles(validIdsObject.discord);
+        const { isMember, memberRoles } = await txCore.discordBot.resolveMemberRoles(validIdsObject.discord);
         if (isMember) {
-            const matchingRole = txAdmin.playerDatabase.config.whitelistedDiscordRoles
+            const matchingRole = txConfig.playerDatabase.whitelistedDiscordRoles
                 .find((requiredRole) => memberRoles?.includes(requiredRole));
             if (matchingRole) {
                 return { allow: true };
@@ -384,7 +394,7 @@ async function checkGuildRoles(
     const reason = rejectMessageTemplate(
         errorTitle,
         `${errorMessage} <br>
-        ${prepCustomMessage(txAdmin.playerDatabase.config.whitelistRejectionMessage)}`
+        ${prepCustomMessage(txConfig.playerDatabase.whitelistRejectionMessage)}`
     );
     return { allow: false, reason };
 }
@@ -394,17 +404,16 @@ async function checkGuildRoles(
  * Checks if the player has a whitelisted license
  */
 async function checkApprovedLicense(
-    txAdmin: TxAdmin,
     validIdsArray: string[],
     validIdsObject: PlayerIdsObjectType,
     validHwidsArray: string[],
     playerName: string
 ): Promise<AllowRespType | DenyRespType> {
     const textKeys = {
-        mode_title: txAdmin.translator.t('whitelist_messages.approved_license.mode_title'),
-        insufficient_ids: txAdmin.translator.t('whitelist_messages.approved_license.insufficient_ids'),
-        deny_title: txAdmin.translator.t('whitelist_messages.approved_license.deny_title'),
-        request_id_label: txAdmin.translator.t('whitelist_messages.approved_license.request_id_label'),
+        mode_title: txCore.translator.t('whitelist_messages.approved_license.mode_title'),
+        insufficient_ids: txCore.translator.t('whitelist_messages.approved_license.insufficient_ids'),
+        deny_title: txCore.translator.t('whitelist_messages.approved_license.deny_title'),
+        request_id_label: txCore.translator.t('whitelist_messages.approved_license.request_id_label'),
     };
 
     //Check if license is available
@@ -436,13 +445,13 @@ async function checkApprovedLicense(
     const allIdsFilter = (x: DatabaseWhitelistApprovalsType) => {
         return validIdsArray.includes(x.identifier);
     }
-    const approvals = txAdmin.playerDatabase.getWhitelistApprovals(allIdsFilter);
+    const approvals = txCore.database.whitelist.findManyApprovals(allIdsFilter);
     if (approvals.length) {
         //update or register player
         if (typeof player !== 'undefined' && player.license) {
             player.setWhitelist(true);
         } else {
-            txAdmin.playerDatabase.registerPlayer({
+            txCore.database.players.register({
                 license: validIdsObject.license,
                 ids: validIdsArray,
                 hwids: validHwidsArray,
@@ -456,8 +465,8 @@ async function checkApprovedLicense(
         }
 
         //Remove entries from whitelistApprovals & whitelistRequests
-        txAdmin.playerDatabase.removeWhitelistApprovals(allIdsFilter);
-        txAdmin.playerDatabase.removeWhitelistRequests({ license: validIdsObject.license });
+        txCore.database.whitelist.removeManyApprovals(allIdsFilter);
+        txCore.database.whitelist.removeManyRequests({ license: validIdsObject.license });
 
         //return allow join
         return { allow: true };
@@ -467,9 +476,9 @@ async function checkApprovedLicense(
     //Player is not whitelisted
     //Resolve player discord
     let discordTag, discordAvatar;
-    if (validIdsObject.discord && txAdmin.discordBot.isClientReady) {
+    if (validIdsObject.discord && txCore.discordBot.isClientReady) {
         try {
-            const { tag, avatar } = await txAdmin.discordBot.resolveMemberProfile(validIdsObject.discord);
+            const { tag, avatar } = await txCore.discordBot.resolveMemberProfile(validIdsObject.discord);
             discordTag = tag;
             discordAvatar = avatar;
         } catch (error) { }
@@ -478,10 +487,10 @@ async function checkApprovedLicense(
     //Check if this player has an active wl request
     //NOTE: it could return multiple, but we are not dealing with it
     let wlRequestId: string;
-    const requests = txAdmin.playerDatabase.getWhitelistRequests({ license: validIdsObject.license });
+    const requests = txCore.database.whitelist.findManyRequests({ license: validIdsObject.license });
     if (requests.length) {
         wlRequestId = requests[0].id; //just getting the first
-        txAdmin.playerDatabase.updateWhitelistRequests(validIdsObject.license, {
+        txCore.database.whitelist.updateRequest(validIdsObject.license, {
             playerDisplayName: displayName,
             playerPureName: pureName,
             discordTag,
@@ -489,7 +498,7 @@ async function checkApprovedLicense(
             tsLastAttempt: ts,
         });
     } else {
-        wlRequestId = txAdmin.playerDatabase.registerWhitelistRequests({
+        wlRequestId = txCore.database.whitelist.registerRequest({
             license: validIdsObject.license,
             playerDisplayName: displayName,
             playerPureName: pureName,
@@ -497,7 +506,7 @@ async function checkApprovedLicense(
             discordAvatar,
             tsLastAttempt: ts,
         });
-        txAdmin.fxRunner.sendEvent('whitelistRequest', {
+        txCore.fxRunner.sendEvent('whitelistRequest', {
             action: 'requested',
             playerName: displayName,
             requestId: wlRequestId,
@@ -510,7 +519,7 @@ async function checkApprovedLicense(
         textKeys.deny_title,
         `<strong>${textKeys.request_id_label}:</strong>
         <codeid>${wlRequestId}</codeid> <br>
-        ${prepCustomMessage(txAdmin.playerDatabase.config.whitelistRejectionMessage)}`
+        ${prepCustomMessage(txConfig.playerDatabase.whitelistRejectionMessage)}`
     );
     return { allow: false, reason }
 }

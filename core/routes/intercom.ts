@@ -23,11 +23,11 @@ export default async function Intercom(ctx: InitializedCtx) {
     //Delegate to the specific scope functions
     if (scope == 'monitor') {
         try {
-            ctx.txAdmin.healthMonitor.handleHeartBeat('http', postData);
-            return ctx.send(ctx.txAdmin.statsManager.txRuntime.currHbData);
+            txCore.fxMonitor.handleHeartBeat('http');
+            return ctx.send(txCore.metrics.txRuntime.currHbData);
         } catch (error) {
             return ctx.send({
-                txAdminVersion: txEnv.txAdminVersion,
+                txAdminVersion: txEnv.txaVersion,
                 success: false,
             });
         }
@@ -35,7 +35,7 @@ export default async function Intercom(ctx: InitializedCtx) {
         if (!Array.isArray(postData.resources)) {
             return ctx.utils.error(400, 'Invalid Request');
         }
-        ctx.txAdmin.resourcesManager.tmpUpdateResourceList(postData.resources);
+        txCore.fxResources.tmpUpdateResourceList(postData.resources);
     } else {
         return ctx.send({
             type: 'danger',
@@ -44,7 +44,7 @@ export default async function Intercom(ctx: InitializedCtx) {
     }
 
     return ctx.send({
-        txAdminVersion: txEnv.txAdminVersion,
+        txAdminVersion: txEnv.txaVersion,
         success: false,
     });
 };

@@ -38,7 +38,7 @@ export default async function AuthChangeIdentifiers(ctx: AuthedCtx) {
         try {
             if (consts.validIdentifiers.fivem.test(cfxreId)) {
                 const id = cfxreId.split(':')[1];
-                const res = await got(`https://policy-live.fivem.net/api/getUserInfo/${id}`, cfxHttpReqOptions).json();
+                const res = await got(`https://policy-live.fivem.net/api/getUserInfo/${id}`, cfxHttpReqOptions).json<any>();
                 if (!res.username || !res.username.length) {
                     return ctx.send<GenericApiResp>({
                         error: `(ERR1) Invalid CitizenFX ID`,
@@ -75,12 +75,12 @@ export default async function AuthChangeIdentifiers(ctx: AuthedCtx) {
     }
 
     //Get vault admin
-    const vaultAdmin = ctx.txAdmin.adminVault.getAdminByName(ctx.admin.name);
+    const vaultAdmin = txCore.adminStore.getAdminByName(ctx.admin.name);
     if (!vaultAdmin) throw new Error('Wait, what? Where is that admin?');
 
     //Edit admin and give output
     try {
-        await ctx.txAdmin.adminVault.editAdmin(ctx.admin.name, null, citizenfxData, discordData);
+        await txCore.adminStore.editAdmin(ctx.admin.name, null, citizenfxData, discordData);
 
         ctx.admin.logAction('Changing own identifiers.');
         return ctx.send<GenericApiResp>({ success: true });

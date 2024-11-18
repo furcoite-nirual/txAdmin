@@ -6,7 +6,6 @@ import dashboardRoom from './wsRooms/dashboard';
 import playerlistRoom from './wsRooms/playerlist';
 import liveconsoleRoom from './wsRooms/liveconsole';
 import serverlogRoom from './wsRooms/serverlog';
-import TxAdmin from '@core/txAdmin';
 import { AuthedAdminType, checkRequestAuth } from './authLogic';
 import { SocketWithSession } from './ctxTypes';
 import { isIpAddressLocal } from '@lib/host/isIpAddressLocal';
@@ -54,20 +53,18 @@ const forceUiReload = (socket: SocketWithSession) => {
 };
 
 export default class WebSocket {
-    readonly #txAdmin: TxAdmin;
     readonly #io: SocketIO;
     readonly #rooms: Record<RoomNames, RoomType>;
     #eventBuffer: { name: string, data: any }[] = [];
 
-    constructor(txAdmin: TxAdmin, io: SocketIO) {
-        this.#txAdmin = txAdmin;
+    constructor(io: SocketIO) {
         this.#io = io;
         this.#rooms = {
-            status: statusRoom(txAdmin),
-            dashboard: dashboardRoom(txAdmin),
-            playerlist: playerlistRoom(txAdmin),
-            liveconsole: liveconsoleRoom(txAdmin),
-            serverlog: serverlogRoom(txAdmin),
+            status: statusRoom,
+            dashboard: dashboardRoom,
+            playerlist: playerlistRoom,
+            liveconsole: liveconsoleRoom,
+            serverlog: serverlogRoom,
         };
 
         setInterval(this.flushBuffers.bind(this), 250);
@@ -77,16 +74,15 @@ export default class WebSocket {
      * Refreshes the auth data for all connected admins
      * If an admin is not authed anymore, they will be disconnected
      * If an admin lost permission to a room, they will be kicked out of it
-     * This is called from AdminVault.refreshOnlineAdmins()
+     * This is called from AdminStore.refreshOnlineAdmins()
      */
     async reCheckAdminAuths() {
         const sockets = await this.#io.fetchSockets();
-        console.verbose.warn(`SocketIO`, `AdminVault changed, refreshing auth for ${sockets.length} sockets.`);
+        console.verbose.warn(`SocketIO`, `AdminStore changed, refreshing auth for ${sockets.length} sockets.`);
         for (const socket of sockets) {
             //@ts-ignore
             const reqIp = getIP(socket);
             const authResult = checkRequestAuth(
-                this.#txAdmin,
                 socket.handshake.headers,
                 reqIp,
                 isIpAddressLocal(reqIp),
@@ -116,11 +112,10 @@ export default class WebSocket {
 
     /**
      * Handles incoming connection requests,
-     * NOTE: For now the user MUST join a room, needs additional logic for 'web' room
      */
     handleConnection(socket: SocketWithSession) {
         //Check the UI version
-        if (socket.handshake.query.uiVersion && socket.handshake.query.uiVersion !== txEnv.txAdminVersion) {
+        if (socket.handshake.query.uiVersion && socket.handshake.query.uiVersion !== txEnv.txaVersion) {
             return forceUiReload(socket);
         }
 
@@ -128,7 +123,6 @@ export default class WebSocket {
             //Checking for session auth
             const reqIp = getIP(socket);
             const authResult = checkRequestAuth(
-                this.#txAdmin,
                 socket.handshake.headers,
                 reqIp,
                 isIpAddressLocal(reqIp),
@@ -153,6 +147,11 @@ export default class WebSocket {
             if (!requestedRooms.length) {
                 return terminateSession(socket, 'no valid room requested');
             }
+
+            //To prevent user from receiving data duplicated in initial data and buffer data
+            //we need to flush the buffers first. This is a bit hacky, but performance shouldn't
+            //really be an issue since we are first validating the user auth.
+            this.flushBuffers();
 
             //For each valid requested room
             for (const requestedRoomName of requestedRooms) {

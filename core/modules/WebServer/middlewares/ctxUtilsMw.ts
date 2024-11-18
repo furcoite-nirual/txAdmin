@@ -66,9 +66,6 @@ function getEjsOptions(filePath: string) {
 const templateCache = new Map();
 const RESOURCE_PATH = 'nui://monitor/web/public/';
 
-const displayFxserverVersionPrefix = convars.isZapHosting && '/ZAP' || convars.isPterodactyl && '/Ptero' || '';
-const displayFxserverVersion = `${txEnv.fxServerVersion}${displayFxserverVersionPrefix}`;
-
 const legacyNavigateHtmlTemplate = `<style>
 body {
     margin: 0;
@@ -156,7 +153,6 @@ async function renderView(
 export default async function ctxUtilsMw(ctx: CtxWithVars, next: Next) {
     //Shortcuts
     const isWebInterface = ctx.txVars.isWebInterface;
-    const txAdmin = ctx.txAdmin;
 
     //Functions
     const renderUtil = async (view: string, data?: { headerTitle?: string, [key: string]: any }) => {
@@ -180,11 +176,11 @@ export default async function ctxUtilsMw(ctx: CtxWithVars, next: Next) {
             isWebInterface,
             basePath: (isWebInterface) ? '/' : consts.nuiWebpipePath,
             resourcePath: (isWebInterface) ? '' : RESOURCE_PATH,
-            serverProfile: txAdmin.info.serverProfile,
-            serverName: txAdmin.globalConfig.serverName || txAdmin.info.serverProfile,
+            serverProfile: txEnv.profile,
+            serverName: txConfig.global.serverName || txEnv.profile,
             uiTheme: legacyTheme,
-            fxServerVersion: displayFxserverVersion,
-            txAdminVersion: txEnv.txAdminVersion,
+            fxServerVersion: txEnv.fxsVersionDisplay,
+            txAdminVersion: txEnv.txaVersion,
             jsInjection: getJavascriptConsts({
                 isZapHosting: convars.isZapHosting, //not in use
                 isPterodactyl: convars.isPterodactyl, //not in use

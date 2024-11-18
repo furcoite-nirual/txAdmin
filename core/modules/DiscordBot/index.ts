@@ -1,16 +1,16 @@
 const modulename = 'DiscordBot';
 import Discord, { ActivityType, ChannelType, Client, EmbedBuilder, GatewayIntentBits } from 'discord.js';
-import TxAdmin from '@core/txAdmin';
 import slashCommands from './slash';
 import interactionCreateHandler from './interactionCreateHandler';
 import { generateStatusMessage } from './commands/status';
 import consoleFactory from '@lib/console';
 import { embedColors } from './discordHelpers';
+import { DiscordBotStatus } from '@shared/enums';
 const console = consoleFactory(modulename);
 
 
 //Helpers
-type DiscordBotConfigType = {
+export type DiscordBotConfigType = {
     enabled: boolean;
     token: string;
     guild: string;
@@ -31,8 +31,11 @@ type AnnouncementType = {
 }
 
 
+/**
+ * Module that handles the discord bot, provides methods to resolve members and send announcements, as well as
+ * providing discord slash commands.
+ */
 export default class DiscordBot {
-    readonly #txAdmin: TxAdmin;
     readonly #clientOptions: Discord.ClientOptions = {
         intents: [
             GatewayIntentBits.Guilds,
@@ -56,14 +59,16 @@ export default class DiscordBot {
     announceChannel: Discord.TextBasedChannel | undefined;
     #lastDisallowedIntentsError: number = 0; //ms
     #lastGuildMembersCacheRefresh: number = 0; //ms
+    #lastStatus = DiscordBotStatus.Disabled;
+    #lastExplicitStatus = DiscordBotStatus.Disabled;
 
 
-    constructor(txAdmin: TxAdmin, public config: DiscordBotConfigType) {
-        this.#txAdmin = txAdmin;
-
-        if (this.config.enabled) {
-            this.startBot().catch((e) => { });
-        }
+    constructor() {
+        setImmediate(() => {
+            if (txConfig.discordBot.enabled) {
+                this.startBot().catch((e) => { });
+            }
+        });
 
         // FIXME: Hacky solution to fix the issue with disallowed intents
         // Remove this when issue below is fixed 
@@ -76,10 +81,15 @@ export default class DiscordBot {
 
         //Cron
         setInterval(() => {
-            if (this.config.enabled) {
-                this.updateStatus().catch((e) => { });
+            if (txConfig.discordBot.enabled) {
+                this.updateBotStatus().catch((e) => { });
             }
-        }, 60_000)
+        }, 60_000);
+        //Not sure how often do we want to do this, or if we need to do this at all,
+        //but previously this was indirectly refreshed every 5 seconds by the health monitor
+        setInterval(() => {
+            this.refreshWsStatus();
+        }, 7500);
     }
 
 
@@ -88,16 +98,16 @@ export default class DiscordBot {
      */
     async refreshConfig() {
         this.#lastGuildMembersCacheRefresh = 0;
-        this.config = this.#txAdmin.configVault.getScoped('discordBot');
         if (this.#client) {
             console.warn('Stopping Discord Bot');
             this.#client.destroy();
+            this.refreshWsStatus();
             setTimeout(() => {
-                if (!this.config.enabled) this.#client = undefined;
+                if (!txConfig.discordBot.enabled) this.#client = undefined;
             }, 1000);
         }
 
-        if (this.config.enabled) {
+        if (txConfig.discordBot.enabled) {
             return this.startBot();
         } else {
             return true;
@@ -114,8 +124,24 @@ export default class DiscordBot {
     /**
      * Passthrough to discord.js websocket status
      */
-    get wsStatus() {
-        return (this.#client) ? this.#client.ws.status : false;
+    get status(): DiscordBotStatus {
+        if (!txConfig.discordBot.enabled) {
+            return DiscordBotStatus.Disabled;
+        } else if (this.#client?.ws.status === Discord.Status.Ready) {
+            return DiscordBotStatus.Ready;
+        } else {
+            return this.#lastExplicitStatus;
+        }
+    }
+
+    /**
+     * Updates the bot client status and pushes to the websocket
+     */
+    refreshWsStatus() {
+        if (this.#lastStatus !== this.status) {
+            this.#lastStatus = this.status;
+            txCore.webServer.webSocket.pushRefresh('status');
+        }
     }
 
 
@@ -123,9 +149,9 @@ export default class DiscordBot {
      * Send an announcement to the configured channel
      */
     async sendAnnouncement(content: AnnouncementType) {
-        if (!this.config.enabled) return;
+        if (!txConfig.discordBot.enabled) return;
         if (
-            !this.config.announceChannel
+            !txConfig.discordBot.announceChannel
             || !this.#client?.isReady()
             || !this.announceChannel
         ) {
@@ -138,13 +164,13 @@ export default class DiscordBot {
             if (content.title) {
                 title = (typeof content.title === 'string')
                     ? content.title
-                    : this.#txAdmin.translator.t(content.title.key, content.title.data);
+                    : txCore.translator.t(content.title.key, content.title.data);
             }
             let description;
             if (content.description) {
                 description = (typeof content.description === 'string')
                     ? content.description
-                    : this.#txAdmin.translator.t(content.description.key, content.description.data);
+                    : txCore.translator.t(content.description.key, content.description.data);
             }
 
             const embed = new EmbedBuilder({ title, description }).setColor(embedColors[content.type]);
@@ -158,7 +184,7 @@ export default class DiscordBot {
     /**
      * Update persistent status and activity
      */
-    async updateStatus() {
+    async updateBotStatus() {
         if (!this.#client?.isReady() || !this.#client.user) {
             console.verbose.warn('not ready yet to update status');
             return false;
@@ -166,9 +192,9 @@ export default class DiscordBot {
 
         //Updating bot activity
         try {
-            const serverClients = this.#txAdmin.playerlistManager.onlineCount;
-            const serverMaxClients = this.#txAdmin.persistentCache.get('fxsRuntime:maxClients') ?? '??';
-            const serverName = this.#txAdmin.globalConfig.serverName;
+            const serverClients = txCore.fxPlayerlist.onlineCount;
+            const serverMaxClients = txCore.cacheStore.get('fxsRuntime:maxClients') ?? '??';
+            const serverName = txConfig.global.serverName;
             const message = `[${serverClients}/${serverMaxClients}] on ${serverName}`;
             this.#client.user.setActivity(message, { type: ActivityType.Watching });
         } catch (error) {
@@ -177,8 +203,8 @@ export default class DiscordBot {
 
         //Updating server status embed
         try {
-            const oldChannelId = this.#txAdmin.persistentCache.get('discord:status:channelId');
-            const oldMessageId = this.#txAdmin.persistentCache.get('discord:status:messageId');
+            const oldChannelId = txCore.cacheStore.get('discord:status:channelId');
+            const oldMessageId = txCore.cacheStore.get('discord:status:messageId');
 
             if (typeof oldChannelId === 'string' && typeof oldMessageId === 'string') {
                 const oldChannel = await this.#client.channels.fetch(oldChannelId);
@@ -186,7 +212,7 @@ export default class DiscordBot {
                 if (oldChannel.type !== ChannelType.GuildText && oldChannel.type !== ChannelType.GuildAnnouncement) {
                     throw new Error(`oldChannel is not guild text or announcement channel`);
                 }
-                await oldChannel.messages.edit(oldMessageId, generateStatusMessage(this.#txAdmin));
+                await oldChannel.messages.edit(oldMessageId, generateStatusMessage());
             }
 
         } catch (error) {
@@ -212,23 +238,27 @@ export default class DiscordBot {
                 console.warn('Stopping Discord Bot');
                 this.#client?.destroy();
                 setImmediate(() => {
+                    this.#lastExplicitStatus = DiscordBotStatus.Error;
+                    this.refreshWsStatus();
                     this.#client = undefined;
                 });
                 return reject(e);
             }
 
             //Check for guild id
-            if (typeof this.config.guild !== 'string' || !this.config.guild.length) {
+            if (typeof txConfig.discordBot.guild !== 'string' || !txConfig.discordBot.guild.length) {
                 return sendError('Discord bot enabled while guild id is not set.');
             }
 
             //State check
-            if (this.#client?.ws.status !== 3 && this.#client?.ws.status !== 5) {
+            if (this.#client && this.#client.ws.status !== 3 && this.#client.ws.status !== 5) {
                 console.verbose.warn('Destroying client before restart.');
-                this.#client?.destroy();
+                this.#client.destroy();
             }
 
             //Setting up client object
+            this.#lastExplicitStatus = DiscordBotStatus.Starting;
+            this.refreshWsStatus();
             this.#client = new Client(this.#clientOptions);
 
             //Setup disallowed intents unhandled rejection watcher
@@ -250,10 +280,10 @@ export default class DiscordBot {
                 if (!this.#client?.isReady() || !this.#client.user) throw new Error(`ready event while not being ready`);
 
                 //Fetching guild
-                const guild = this.#client.guilds.cache.find((guild) => guild.id === this.config.guild);
+                const guild = this.#client.guilds.cache.find((guild) => guild.id === txConfig.discordBot.guild);
                 if (!guild) {
                     return sendError(
-                        `Discord bot could not resolve guild/server ID ${this.config.guild}.`,
+                        `Discord bot could not resolve guild/server ID ${txConfig.discordBot.guild}.`,
                         {
                             code: 'CustomNoGuild',
                             clientId: this.#client.user.id
@@ -298,12 +328,12 @@ export default class DiscordBot {
                 }
 
                 //Fetching announcements channel
-                if (this.config.announceChannel) {
-                    const fetchedChannel = this.#client.channels.cache.find((x) => x.id === this.config.announceChannel);
+                if (txConfig.discordBot.announceChannel) {
+                    const fetchedChannel = this.#client.channels.cache.find((x) => x.id === txConfig.discordBot.announceChannel);
                     if (!fetchedChannel) {
-                        return sendError(`Channel ${this.config.announceChannel} not found.`);
+                        return sendError(`Channel ${txConfig.discordBot.announceChannel} not found.`);
                     } else if (fetchedChannel.type !== ChannelType.GuildText && fetchedChannel.type !== ChannelType.GuildAnnouncement) {
-                        return sendError(`Channel ${this.config.announceChannel} - ${(fetchedChannel as any)?.name} is not a text or announcement channel.`);
+                        return sendError(`Channel ${txConfig.discordBot.announceChannel} - ${(fetchedChannel as any)?.name} is not a text or announcement channel.`);
                     } else {
                         this.announceChannel = fetchedChannel;
                     }
@@ -311,10 +341,11 @@ export default class DiscordBot {
 
 
                 // if previously registered by tx before v6 or other bot
-                this.guild.commands.set(slashCommands).catch(console.error);
-                this.#client.application?.commands.set([]).catch(console.error);
+                this.guild.commands.set(slashCommands).catch(console.dir);
+                this.#client.application?.commands.set([]).catch(console.dir);
 
-                this.updateStatus().catch((e) => { });
+                this.updateBotStatus().catch((e) => { });
+                this.refreshWsStatus();
 
                 console.ok(`Started and logged in as '${this.#client.user.tag}'`);
                 return resolve();
@@ -322,19 +353,21 @@ export default class DiscordBot {
 
             //Setup remaining event listeners
             this.#client.on('error', (error) => {
+                this.refreshWsStatus();
                 clearInterval(disallowedIntentsWatcherId);
                 console.error(`Error from Discord.js client: ${error.message}`);
                 return reject(error);
             });
             this.#client.on('resume', () => {
                 console.verbose.ok('Connection with Discord API server resumed');
-                this.updateStatus().catch((e) => { });
+                this.updateBotStatus().catch((e) => { });
+                this.refreshWsStatus();
             });
-            this.#client.on('interactionCreate', interactionCreateHandler.bind(null, this.#txAdmin));
+            this.#client.on('interactionCreate', interactionCreateHandler);
             // this.#client.on('debug', console.verbose.debug);
 
             //Start bot
-            this.#client.login(this.config.token).catch((error) => {
+            this.#client.login(txConfig.discordBot.token).catch((error) => {
                 clearInterval(disallowedIntentsWatcherId);
 
                 //for some reason, this is not throwing unhandled rejection anymore /shrug
@@ -344,6 +377,10 @@ export default class DiscordBot {
                         { code: 'DisallowedIntents' }
                     );
                 }
+
+                //set status to error
+                this.#lastExplicitStatus = DiscordBotStatus.Error;
+                this.refreshWsStatus();
 
                 //if no message, create one
                 if (!('message' in error) || !error.message) {
@@ -359,7 +396,7 @@ export default class DiscordBot {
      * Refreshes the bot guild member cache
      */
     async refreshMemberCache() {
-        if (!this.config.enabled) throw new Error(`discord bot is disabled`);
+        if (!txConfig.discordBot.enabled) throw new Error(`discord bot is disabled`);
         if (!this.#client?.isReady()) throw new Error(`discord bot not ready yet`);
         if (!this.guild) throw new Error(`guild not resolved`);
 
@@ -382,7 +419,7 @@ export default class DiscordBot {
      * Return if an ID is a guild member, and their roles
      */
     async resolveMemberRoles(uid: string) {
-        if (!this.config.enabled) throw new Error(`discord bot is disabled`);
+        if (!txConfig.discordBot.enabled) throw new Error(`discord bot is disabled`);
         if (!this.#client?.isReady()) throw new Error(`discord bot not ready yet`);
         if (!this.guild) throw new Error(`guild not resolved`);
 
@@ -421,7 +458,7 @@ export default class DiscordBot {
 
             if (member) {
                 return {
-                    tag: `${member.nickname ?? member.user.username}#${member.user.discriminator}`,
+                    tag: member.nickname ?? member.user.username,
                     avatar: member.displayAvatarURL(avatarOptions) ?? member.user.displayAvatarURL(avatarOptions),
                 };
             }
@@ -433,7 +470,7 @@ export default class DiscordBot {
         const user = await this.#client.users.fetch(uid);
         if (user) {
             return {
-                tag: `${user.username}#${user.discriminator}`,
+                tag: user.username,
                 avatar: user.displayAvatarURL(avatarOptions),
             };
         } else {

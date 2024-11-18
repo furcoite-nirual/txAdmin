@@ -1,6 +1,6 @@
 /* eslint-disable no-unused-vars */
 const modulename = 'WebServer:MasterActions:Action';
-import { DatabaseActionBanType, DatabaseActionType, DatabaseActionWarnType, DatabasePlayerType } from '@modules/PlayerDatabase/databaseTypes';
+import { DatabaseActionBanType, DatabaseActionType, DatabaseActionWarnType, DatabasePlayerType } from '@modules/Database/databaseTypes';
 import { now } from '@lib/misc';
 import { GenericApiErrorResp } from '@shared/genericApiTypes';
 import consoleFactory from '@lib/console';
@@ -14,16 +14,16 @@ const console = consoleFactory(modulename);
 export default async function MasterActionsAction(ctx: AuthedCtx) {
     //Sanity check
     if (typeof ctx.params.action !== 'string') {
-        return ctx.send({error: 'Invalid Request'});
+        return ctx.send({ error: 'Invalid Request' });
     }
     const action = ctx.params.action;
 
     //Check permissions
     if (!ctx.admin.testPermission('master', modulename)) {
-        return ctx.send({error: 'Only the master account has permission to view/use this page.'});
+        return ctx.send({ error: 'Only the master account has permission to view/use this page.' });
     }
     if (!ctx.txVars.isWebInterface) {
-        return ctx.send({error: 'This functionality cannot be used by the in-game menu, please use the web version of txAdmin.'});
+        return ctx.send({ error: 'This functionality cannot be used by the in-game menu, please use the web version of txAdmin.' });
     }
 
     //Delegate to the specific action functions
@@ -34,7 +34,7 @@ export default async function MasterActionsAction(ctx: AuthedCtx) {
     } else if (action == 'revokeWhitelists') {
         return handleRevokeWhitelists(ctx);
     } else {
-        return ctx.send({error: 'Unknown settings action.'});
+        return ctx.send({ error: 'Unknown settings action.' });
     }
 };
 
@@ -43,21 +43,20 @@ export default async function MasterActionsAction(ctx: AuthedCtx) {
  * Handle FXServer settings reset nad resurn to setup
  */
 async function handleResetFXServer(ctx: AuthedCtx) {
-
-    if (ctx.txAdmin.fxRunner.fxChild !== null) {
+    if (txCore.fxRunner.fxChild !== null) {
         ctx.admin.logCommand('STOP SERVER');
-        ctx.txAdmin.fxRunner.killServer('resetting fxserver config', ctx.admin.name, false).catch((e) => {});
+        txCore.fxRunner.killServer('resetting fxserver config', ctx.admin.name, false).catch((e) => { });
     }
 
     //Making sure the deployer is not running
-    globals.deployer = null;
+    txManager.deployer = null;
 
     //Preparing & saving config
-    const newConfig = ctx.txAdmin.configVault.getScopedStructure('fxRunner');
+    const newConfig = txCore.configStore.getScopedStructure('fxRunner');
     newConfig.serverDataPath = null;
     newConfig.cfgPath = null;
     try {
-        ctx.txAdmin.configVault.saveProfile('fxRunner', newConfig);
+        txCore.configStore.saveProfile('fxRunner', newConfig);
     } catch (error) {
         console.warn(`[${ctx.admin.name}] Error changing FXServer settings.`);
         console.verbose.dir(error);
@@ -69,10 +68,10 @@ async function handleResetFXServer(ctx: AuthedCtx) {
     }
 
     //technically not required, but faster than fxRunner.killServer()
-    globals.webServer?.webSocket.pushRefresh('status'); 
+    txCore.webServer.webSocket.pushRefresh('status');
 
     //Sending output
-    ctx.txAdmin.fxRunner.refreshConfig();
+    txCore.fxRunner.refreshConfig();
     ctx.admin.logAction('Resetting fxRunner settings.');
     return ctx.send({ success: true });
 }
@@ -98,7 +97,7 @@ async function handleCleanDatabase(ctx: AuthedCtx) {
         || typeof ctx.request.body.warns !== 'string'
         || typeof ctx.request.body.hwids !== 'string'
     ) {
-        return sendTypedResp({error: 'Invalid Request'});
+        return sendTypedResp({ error: 'Invalid Request' });
     }
     const { players, bans, warns, hwids } = ctx.request.body;
     const daySecs = 86400;
@@ -115,7 +114,7 @@ async function handleCleanDatabase(ctx: AuthedCtx) {
     } else if (players === '15d') {
         playersFilter = (x: DatabasePlayerType) => x.tsLastConnection < (currTs - 15 * daySecs) && !x.notes;
     } else {
-        return sendTypedResp({error: 'Invalid players filter type.'});
+        return sendTypedResp({ error: 'Invalid players filter type.' });
     }
 
     let bansFilter: Function;
@@ -128,7 +127,7 @@ async function handleCleanDatabase(ctx: AuthedCtx) {
     } else if (bans === 'all') {
         bansFilter = (x: DatabaseActionBanType) => x.type === 'ban';
     } else {
-        return sendTypedResp({error: 'Invalid bans filter type.'});
+        return sendTypedResp({ error: 'Invalid bans filter type.' });
     }
 
     let warnsFilter: Function;
@@ -145,7 +144,7 @@ async function handleCleanDatabase(ctx: AuthedCtx) {
     } else if (warns === 'all') {
         warnsFilter = (x: DatabaseActionWarnType) => x.type === 'warn';
     } else {
-        return sendTypedResp({error: 'Invalid warns filter type.'});
+        return sendTypedResp({ error: 'Invalid warns filter type.' });
     }
 
     const actionsFilter = (x: DatabaseActionType) => {
@@ -167,35 +166,35 @@ async function handleCleanDatabase(ctx: AuthedCtx) {
         hwidsWipePlayers = true;
         hwidsWipeBans = true;
     } else {
-        return sendTypedResp({error: 'Invalid HWIDs filter type.'});
+        return sendTypedResp({ error: 'Invalid HWIDs filter type.' });
     }
 
     //Run db cleaner
     const tsStart = Date.now();
     let playersRemoved = 0;
     try {
-        playersRemoved = ctx.txAdmin.playerDatabase.cleanDatabase('players', playersFilter);
+        playersRemoved = txCore.database.cleanup.bulkRemove('players', playersFilter);
     } catch (error) {
-        return sendTypedResp({error: `<b>Failed to clean players with error:</b><br>${(error as Error).message}`});
+        return sendTypedResp({ error: `<b>Failed to clean players with error:</b><br>${(error as Error).message}` });
     }
 
     let actionsRemoved = 0;
     try {
-        actionsRemoved = ctx.txAdmin.playerDatabase.cleanDatabase('actions', actionsFilter);
+        actionsRemoved = txCore.database.cleanup.bulkRemove('actions', actionsFilter);
     } catch (error) {
-        return sendTypedResp({error: `<b>Failed to clean actions with error:</b><br>${(error as Error).message}`});
+        return sendTypedResp({ error: `<b>Failed to clean actions with error:</b><br>${(error as Error).message}` });
     }
 
     let hwidsRemoved = 0;
     try {
-        hwidsRemoved = ctx.txAdmin.playerDatabase.wipeHwids(hwidsWipePlayers, hwidsWipeBans);
+        hwidsRemoved = txCore.database.cleanup.wipeHwids(hwidsWipePlayers, hwidsWipeBans);
     } catch (error) {
-        return sendTypedResp({error: `<b>Failed to clean HWIDs with error:</b><br>${(error as Error).message}`});
+        return sendTypedResp({ error: `<b>Failed to clean HWIDs with error:</b><br>${(error as Error).message}` });
     }
 
     //Return results
     const msElapsed = Date.now() - tsStart;
-    return sendTypedResp({msElapsed, playersRemoved, actionsRemoved, hwidsRemoved});
+    return sendTypedResp({ msElapsed, playersRemoved, actionsRemoved, hwidsRemoved });
 }
 
 
@@ -212,7 +211,7 @@ async function handleRevokeWhitelists(ctx: AuthedCtx) {
 
     //Sanity check
     if (typeof ctx.request.body.filter !== 'string') {
-        return sendTypedResp({error: 'Invalid Request'});
+        return sendTypedResp({ error: 'Invalid Request' });
     }
     const filterInput = ctx.request.body.filter;
     const daySecs = 86400;
@@ -228,15 +227,15 @@ async function handleRevokeWhitelists(ctx: AuthedCtx) {
     } else if (filterInput === '7d') {
         filterFunc = (p: DatabasePlayerType) => p.tsLastConnection < (currTs - 7 * daySecs);
     } else {
-        return sendTypedResp({error: 'Invalid whitelists filter type.'});
+        return sendTypedResp({ error: 'Invalid whitelists filter type.' });
     }
 
     try {
         const tsStart = Date.now();
-        const cntRemoved = ctx.txAdmin.playerDatabase.bulkRevokePlayerWhitelist(filterFunc);
+        const cntRemoved = txCore.database.players.bulkRevokeWhitelist(filterFunc);
         const msElapsed = Date.now() - tsStart;
-        return sendTypedResp({msElapsed, cntRemoved});
+        return sendTypedResp({ msElapsed, cntRemoved });
     } catch (error) {
-        return sendTypedResp({error: `<b>Failed to clean players with error:</b><br>${(error as Error).message}`});
+        return sendTypedResp({ error: `<b>Failed to clean players with error:</b><br>${(error as Error).message}` });
     }
 }

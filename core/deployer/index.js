@@ -22,9 +22,10 @@ export const RECIPE_DEPLOYER_VERSION = 3;
  */
 export class Deployer {
     /**
-     * @param {string} originalRecipe
+     * @param {string|false} originalRecipe
      * @param {string} deployPath
      * @param {boolean} isTrustedSource
+     * @param {object} customMetaData
      */
     constructor(originalRecipe, deploymentID, deployPath, isTrustedSource, customMetaData = {}) {
         console.log('Deployer instance ready.');
@@ -37,7 +38,7 @@ export class Deployer {
         this.originalRecipe = originalRecipe;
         this.deploymentID = deploymentID;
         this.progress = 0;
-        this.serverName = customMetaData.serverName || globals.txAdmin.globalConfig.serverName || '';
+        this.serverName = customMetaData.serverName || txConfig.global.serverName || '';
         this.logLines = [];
 
         //Load recipe
@@ -164,7 +165,7 @@ export class Deployer {
                 if (contextVariables.$step) {
                     msg += '\nDebug/Status: '
                         + JSON.stringify([
-                            txEnv.txAdminVersion,
+                            txEnv.txaVersion,
                             await getOsDistro(),
                             contextVariables.$step
                         ]);

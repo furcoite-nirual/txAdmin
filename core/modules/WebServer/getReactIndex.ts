@@ -14,8 +14,6 @@ const console = consoleFactory(modulename);
 // Therefore, it was necessary to tag it with `data-prod-only` so it can be removed in dev mode.
 
 //Consts
-const displayFxserverVersionPrefix = convars.isZapHosting && '/ZAP' || convars.isPterodactyl && '/Ptero' || '';
-const displayFxserverVersion = `${txEnv.fxServerVersion}${displayFxserverVersionPrefix}`;
 const serverTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 //Cache the index.html file unless in dev mode
@@ -97,7 +95,6 @@ export default async function getReactIndex(ctx: CtxWithVars | AuthedCtx) {
 
     //Checking if already logged in
     const authResult = checkRequestAuth(
-        ctx.txAdmin,
         ctx.request.headers,
         ctx.ip,
         ctx.txVars.isLocalRequest,
@@ -110,22 +107,22 @@ export default async function getReactIndex(ctx: CtxWithVars | AuthedCtx) {
 
     //Preparing vars
     const basePath = (ctx.txVars.isWebInterface) ? '/' : consts.nuiWebpipePath;
-    const serverName = ctx.txAdmin.globalConfig.serverName || ctx.txAdmin.info.serverProfile;
+    const serverName = txConfig.global.serverName || txEnv.profile;
     const injectedConsts = {
         //env
-        fxsVersion: displayFxserverVersion,
-        fxsOutdated: ctx.txAdmin.cfxUpdateChecker.fxsUpdateData,
-        txaVersion: txEnv.txAdminVersion,
-        txaOutdated: ctx.txAdmin.cfxUpdateChecker.txaUpdateData,
+        fxsVersion: txEnv.fxsVersionDisplay,
+        fxsOutdated: txCore.updateChecker.fxsUpdateData,
+        txaVersion: txEnv.txaVersion,
+        txaOutdated: txCore.updateChecker.txaUpdateData,
         serverTimezone,
         isZapHosting: convars.isZapHosting, //not in use
         isPterodactyl: convars.isPterodactyl, //not in use
         isWebInterface: ctx.txVars.isWebInterface,
         showAdvanced: (txDevEnv.ENABLED || console.isVerbose),
-        hasMasterAccount: ctx.txAdmin.adminVault.hasAdmins(true),
+        hasMasterAccount: txCore.adminStore.hasAdmins(true),
         defaultTheme: tmpDefaultTheme,
         customThemes: tmpCustomThemes.map(({ name, isDark }) => ({ name, isDark })),
-        adsData: ctx.txAdmin.dynamicAds.adData as AdsDataType,
+        adsData: txCore.dynamicAds.adData as AdsDataType,
 
         //auth
         preAuth: authedAdmin && authedAdmin.getAuthData(),
@@ -135,7 +132,7 @@ export default async function getReactIndex(ctx: CtxWithVars | AuthedCtx) {
     const replacers: { [key: string]: string } = {};
     replacers.basePath = `<base href="${basePath}">`;
     replacers.ogTitle = `txAdmin - ${serverName}`;
-    replacers.ogDescripttion = `Manage & Monitor your FiveM/RedM Server with txAdmin v${txEnv.txAdminVersion} atop FXServer ${txEnv.fxServerVersion}`;
+    replacers.ogDescripttion = `Manage & Monitor your FiveM/RedM Server with txAdmin v${txEnv.txaVersion} atop FXServer ${txEnv.fxsVersion}`;
     replacers.txConstsInjection = `<script>window.txConsts = ${JSON.stringify(injectedConsts)};</script>`;
     replacers.devModules = txDevEnv.ENABLED ? devModulesScript : '';
 

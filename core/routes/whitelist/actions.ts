@@ -1,9 +1,9 @@
 const modulename = 'WebServer:WhitelistActions';
 import { GenericApiResp } from '@shared/genericApiTypes';
-import { DuplicateKeyError } from '@modules/PlayerDatabase';
+import { DuplicateKeyError } from '@modules/Database/dbUtils';
 import { now } from '@lib/misc';
 import { parsePlayerId } from '@lib/player/idUtils';
-import { DatabaseWhitelistRequestsType } from '@modules/PlayerDatabase/databaseTypes';
+import { DatabaseWhitelistRequestsType } from '@modules/Database/databaseTypes';
 import consoleFactory from '@lib/console';
 import { AuthedCtx } from '@modules/WebServer/ctxTypes';
 const console = consoleFactory(modulename);
@@ -62,7 +62,7 @@ async function handleApprovals(ctx: AuthedCtx, action: any): Promise<GenericApiR
             : `${idType}:${idValue}`;
         if (idType === 'discord') {
             try {
-                const { tag, avatar } = await ctx.txAdmin.discordBot.resolveMemberProfile(idValue);
+                const { tag, avatar } = await txCore.discordBot.resolveMemberProfile(idValue);
                 playerName = tag;
                 playerAvatar = avatar;
             } catch (error) { }
@@ -70,14 +70,14 @@ async function handleApprovals(ctx: AuthedCtx, action: any): Promise<GenericApiR
 
         //Registering approval
         try {
-            ctx.txAdmin.playerDatabase.registerWhitelistApprovals({
+            txCore.database.whitelist.registerApproval({
                 identifier: idlowerCased,
                 playerName,
                 playerAvatar,
                 tsApproved: now(),
                 approvedBy: ctx.admin.name,
             });
-            ctx.txAdmin.fxRunner.sendEvent('whitelistPreApproval', {
+            txCore.fxRunner.sendEvent('whitelistPreApproval', {
                 action: 'added',
                 identifier: idlowerCased,
                 playerName,
@@ -91,8 +91,8 @@ async function handleApprovals(ctx: AuthedCtx, action: any): Promise<GenericApiR
 
     } else if (action === 'remove') {
         try {
-            ctx.txAdmin.playerDatabase.removeWhitelistApprovals({ identifier: idlowerCased });
-            ctx.txAdmin.fxRunner.sendEvent('whitelistPreApproval', {
+            txCore.database.whitelist.removeManyApprovals({ identifier: idlowerCased });
+            txCore.fxRunner.sendEvent('whitelistPreApproval', {
                 action: 'removed',
                 identifier: idlowerCased,
                 adminName: ctx.admin.name,
@@ -122,8 +122,8 @@ async function handleRequests(ctx: AuthedCtx, action: any): Promise<GenericApiRe
 
         try {
             const filter = (req: DatabaseWhitelistRequestsType) => req.tsLastAttempt <= cutoff;
-            ctx.txAdmin.playerDatabase.removeWhitelistRequests(filter);
-            ctx.txAdmin.fxRunner.sendEvent('whitelistRequest', {
+            txCore.database.whitelist.removeManyRequests(filter);
+            txCore.fxRunner.sendEvent('whitelistRequest', {
                 action: 'deniedAll',
                 adminName: ctx.admin.name,
             });
@@ -142,7 +142,7 @@ async function handleRequests(ctx: AuthedCtx, action: any): Promise<GenericApiRe
 
     if (action === 'approve') {
         //Find request
-        const requests = ctx.txAdmin.playerDatabase.getWhitelistRequests({ id: reqId });
+        const requests = txCore.database.whitelist.findManyRequests({ id: reqId });
         if (!requests.length) {
             return { error: `Whitelist request ID ${reqId} not found.` };
         }
@@ -152,14 +152,14 @@ async function handleRequests(ctx: AuthedCtx, action: any): Promise<GenericApiRe
         const playerName = req.discordTag ?? req.playerDisplayName;
         const identifier = `license:${req.license}`;
         try {
-            ctx.txAdmin.playerDatabase.registerWhitelistApprovals({
+            txCore.database.whitelist.registerApproval({
                 identifier,
                 playerName,
                 playerAvatar: (req.discordAvatar) ? req.discordAvatar : null,
                 tsApproved: now(),
                 approvedBy: ctx.admin.name,
             });
-            ctx.txAdmin.fxRunner.sendEvent('whitelistRequest', {
+            txCore.fxRunner.sendEvent('whitelistRequest', {
                 action: 'approved',
                 playerName,
                 requestId: req.id,
@@ -175,7 +175,7 @@ async function handleRequests(ctx: AuthedCtx, action: any): Promise<GenericApiRe
 
         //Remove record from whitelistRequests
         try {
-            ctx.txAdmin.playerDatabase.removeWhitelistRequests({ id: reqId });
+            txCore.database.whitelist.removeManyRequests({ id: reqId });
         } catch (error) {
             return { error: `Failed to remove wl request: ${(error as Error).message}` };
         }
@@ -183,10 +183,10 @@ async function handleRequests(ctx: AuthedCtx, action: any): Promise<GenericApiRe
 
     } else if (action === 'deny') {
         try {
-            const requests = ctx.txAdmin.playerDatabase.removeWhitelistRequests({ id: reqId });
+            const requests = txCore.database.whitelist.removeManyRequests({ id: reqId });
             if(requests.length){
                 const req = requests[0]; //just getting the first
-                ctx.txAdmin.fxRunner.sendEvent('whitelistRequest', {
+                txCore.fxRunner.sendEvent('whitelistRequest', {
                     action: 'denied',
                     playerName: req.playerDisplayName,
                     requestId: req.id,

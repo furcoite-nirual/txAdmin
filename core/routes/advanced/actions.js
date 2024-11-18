@@ -37,17 +37,17 @@ export default async function AdvancedActions(ctx) {
     //Action: Change Verbosity
     if (action == 'change_verbosity') {
         console.setVerbose(parameter == 'true');
-        globals.fxRunner.resetConvars();
+        txCore.fxRunner.resetConvars();
         return ctx.send({ refresh: true });
     } else if (action == 'perform_magic') {
-        const message = JSON.stringify(globals.playerlistManager.getPlayerList(), null, 2);
+        const message = JSON.stringify(txCore.fxPlayerlist.getPlayerList(), null, 2);
         return ctx.send({ type: 'success', message });
     } else if (action == 'show_db') {
-        const dbo = globals.playerDatabase.getDb();
+        const dbo = txCore.database.getDboRef();
         console.dir(dbo);
         return ctx.send({ type: 'success', message: JSON.stringify(dbo, null, 2) });
     } else if (action == 'show_log') {
-        return ctx.send({ type: 'success', message: JSON.stringify(globals.logger.server.getRecentBuffer(), null, 2) });
+        return ctx.send({ type: 'success', message: JSON.stringify(txCore.logger.server.getRecentBuffer(), null, 2) });
     } else if (action == 'memory') {
         let memory;
         try {
@@ -64,16 +64,16 @@ export default async function AdvancedActions(ctx) {
         console.warn('Freezing process for 50 seconds.');
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 * 1000);
     } else if (action == 'resetConvars') {
-        globals.fxRunner.resetConvars();
+        txCore.fxRunner.resetConvars();
         return ctx.send({ refresh: true });
     } else if (action == 'reauth') {
         // txaEvent "adminsUpdated" "[1,5,7]"
-        return globals.fxRunner.sendEvent('adminsUpdated', [1, 5, 7]);
+        return txCore.fxRunner.sendEvent('adminsUpdated', [1, 5, 7]);
     } else if (action == 'getLoggerErrors') {
         const outData = {
-            admin: globals.logger.admin.lrLastError,
-            fxserver: globals.logger.fxserver.lrLastError,
-            server: globals.logger.server.lrLastError,
+            admin: txCore.logger.admin.lrLastError,
+            fxserver: txCore.logger.fxserver.lrLastError,
+            server: txCore.logger.server.lrLastError,
         };
         return ctx.send({ type: 'success', message: JSON.stringify(outData, null, 2) });
     } else if (action == 'testSrcAddress') {
@@ -88,9 +88,6 @@ export default async function AdvancedActions(ctx) {
         return ctx.send({ type: 'success', message: JSON.stringify(outData, null, 2) });
     } else if (action == 'getProcessEnv') {
         return ctx.send({ type: 'success', message: JSON.stringify(process.env, null, 2) });
-    } else if (action == 'setHbDataTracking') {
-        globals.tmpSetHbDataTracking = true;
-        return ctx.send({ type: 'success', message: 'done' });
     } else if (action == 'snap') {
         setTimeout(() => {
             // if (Citizen && Citizen.snap) Citizen.snap();
@@ -98,19 +95,38 @@ export default async function AdvancedActions(ctx) {
             console.warn(`Heap snapshot written to: ${snapFile}`);
         }, 50);
         return ctx.send({ type: 'success', message: 'terminal' });
-    } else if (action == 'gc') {
+    } else if (action === 'gc') {
         if (typeof global.gc === 'function') {
             global.gc();
             return ctx.send({ type: 'success', message: 'done' });
         } else {
             return ctx.send({ type: 'danger', message: 'GC is not exposed' });
         }
+    } else if (action === 'safeEnsureMonitor') {
+        const setCmdResult = txCore.fxRunner.sendCommand(
+            'set',
+            [
+                'txAdmin-luaComToken',
+                txCore.webServer.luaComToken,
+            ]
+        );
+        if (!setCmdResult) {
+            return ctx.send({ type: 'danger', message: 'Failed to reset luaComToken.' });
+        }
+        const ensureCmdResult = txCore.fxRunner.sendCommand(
+            'ensure',
+            ['monitor']
+        );
+        if (ensureCmdResult) {
+            return ctx.send({ type: 'success', message: 'done' });
+        } else {
+            return ctx.send({ type: 'danger', message: 'Failed to ensure monitor.' });
+        }
     } else if (action.startsWith('playerDrop')) {
         const reason = action.split(' ', 2)[1];
-        const category = globals.statsManager.playerDrop.handlePlayerDrop(reason);
+        const category = txCore.metrics.playerDrop.handlePlayerDrop(reason);
         return ctx.send({ type: 'success', message: category });
     } else if (action == 'xxxxxx') {
-        // const res = globals.playerDatabase.xxxxx();
         // console.dir(res);
         return ctx.send({ type: 'success', message: 'terminal' });
     }

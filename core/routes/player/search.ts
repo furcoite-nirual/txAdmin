@@ -1,13 +1,13 @@
 const modulename = 'WebServer:PlayersTableSearch';
 import { PlayersTablePlayerType, PlayersTableSearchResp } from '@shared/playerApiTypes';
-import { DatabasePlayerType } from '@modules/PlayerDatabase/databaseTypes';
+import { DatabasePlayerType } from '@modules/Database/databaseTypes';
 import consoleFactory from '@lib/console';
 import { AuthedCtx } from '@modules/WebServer/ctxTypes';
 import cleanPlayerName from '@shared/cleanPlayerName';
 import { chain as createChain } from 'lodash-es';
 import Fuse from 'fuse.js';
 import { parseLaxIdsArrayInput } from '@lib/player/idUtils';
-import { TimeCounter } from '@modules/StatsManager/statsUtils';
+import { TimeCounter } from '@modules/Metrics/statsUtils';
 const console = consoleFactory(modulename);
 
 //Helpers
@@ -36,10 +36,10 @@ export default async function PlayerSearch(ctx: AuthedCtx) {
     } = ctx.query;
     const sendTypedResp = (data: PlayersTableSearchResp) => ctx.send(data);
     const searchTime = new TimeCounter();
-    const adminsIdentifiers = ctx.txAdmin.adminVault.getAdminsIdentifiers();
-    const onlinePlayersLicenses = ctx.txAdmin.playerlistManager.getOnlinePlayersLicenses();
-    const dbo = ctx.txAdmin.playerDatabase.getDb();
-    let chain = dbo.chain.get('players').clone(); //shadow clone to avoid sorting the original
+    const adminsIdentifiers = txCore.adminStore.getAdminsIdentifiers();
+    const onlinePlayersLicenses = txCore.fxPlayerlist.getOnlinePlayersLicenses();
+    const dbo = txCore.database.getDboRef();
+    let chain = dbo.chain.get('players').clone(); //shallow clone to avoid sorting the original
     /*
         In order:
         - [X] sort the players by the sortingKey/sortingDesc
@@ -176,7 +176,7 @@ export default async function PlayerSearch(ctx: AuthedCtx) {
         };
     });
 
-    ctx.txAdmin.statsManager.txRuntime.playersTableSearchTime.count(searchTime.stop().milliseconds);
+    txCore.metrics.txRuntime.playersTableSearchTime.count(searchTime.stop().milliseconds);
     return sendTypedResp({
         players: processedPlayers,
         hasReachedEnd,

@@ -2,7 +2,7 @@ const modulename = 'WebServer:PlayerModal';
 import dateFormat from 'dateformat';
 import playerResolver from '@lib/player/playerResolver';
 import { PlayerHistoryItem, PlayerModalResp, PlayerModalPlayerData } from '@shared/playerApiTypes';
-import { DatabaseActionType } from '@modules/PlayerDatabase/databaseTypes';
+import { DatabaseActionType } from '@modules/Database/databaseTypes';
 import { ServerPlayer } from '@lib/player/playerClasses';
 import consoleFactory from '@lib/console';
 import { AuthedCtx } from '@modules/WebServer/ctxTypes';
@@ -47,7 +47,7 @@ export default async function PlayerModal(ctx: AuthedCtx) {
     //Finding the player
     let player;
     try {
-        const refMutex = (mutex === 'current') ? ctx.txAdmin.fxRunner.currentMutex : mutex;
+        const refMutex = (mutex === 'current') ? txCore.fxRunner.currentMutex : mutex;
         player = playerResolver(refMutex, parseInt((netid as string)), license);
     } catch (error) {
         return sendTypedResp({ error: (error as Error).message });

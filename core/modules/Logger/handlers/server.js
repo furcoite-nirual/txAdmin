@@ -1,10 +1,11 @@
 /* eslint-disable padded-blocks */
 const modulename = 'Logger:Server';
-import { QuantileArray, estimateArrayJsonSize } from '@modules/StatsManager/statsUtils';
+import { QuantileArray, estimateArrayJsonSize } from '@modules/Metrics/statsUtils';
 import { LoggerBase } from '../LoggerBase';
 import { getBootDivider } from '../loggerUtils';
 import consoleFactory from '@lib/console';
 import bytes from 'bytes';
+import { summarizeIdsArray } from '@lib/player/idUtils';
 const console = consoleFactory(modulename);
 
 /*
@@ -35,7 +36,7 @@ before sending it to fd3
 // setInterval(() => {
 //     cnt++;
 //     if (cnt > 84) cnt = 1;
-//     const mtx = globals.fxRunner.currentMutex || 'lmao';
+//     const mtx = txCore.fxRunner.currentMutex || 'lmao';
 //     const payload = [
 //         {
 //             src: 'tx',
@@ -44,12 +45,12 @@ before sending it to fd3
 //             data: cnt + '='.repeat(cnt),
 //         },
 //     ];
-//     globals.logger.server.write(mtx, payload);
+//     txCore.logger.server.write(mtx, payload);
 // }, 750);
 
 
 export default class ServerLogger extends LoggerBase {
-    constructor(txAdmin, basePath, lrProfileConfig) {
+    constructor(basePath, lrProfileConfig) {
         const lrDefaultOptions = {
             path: basePath,
             intervalBoundary: true,
@@ -110,14 +111,15 @@ export default class ServerLogger extends LoggerBase {
 
     /**
      * Processes the FD3 log array
-     * @param {Array} data
-     * @param {String} mutex
+     * @param {Object[]} data
+     * @param {string} [mutex]
      */
     write(data, mutex) {
         if (!Array.isArray(data)) {
             console.verbose.warn(`write() expected array, got ${typeof data}`);
             return false;
         }
+        mutex ??= txCore.fxRunner.currentMutex;
 
         //Processing events
         for (let i = 0; i < data.length; i++) {
@@ -135,7 +137,7 @@ export default class ServerLogger extends LoggerBase {
                 if (this.recentBuffer.length > this.recentBufferMaxSize) this.recentBuffer.shift();
 
                 //Send to websocket
-                globals.webServer.webSocket.buffer('serverlog', eventObject);
+                txCore.webServer.webSocket.buffer('serverlog', eventObject);
 
                 //Write to file
                 this.lrStream.write(`${eventString}\n`);
@@ -153,19 +155,15 @@ export default class ServerLogger extends LoggerBase {
      * @param {String} mutex
      */
     processEvent(eventData, mutex) {
-        //Get source + handle playerJoining
+        //Get source
         let srcObject; //to be sent to the UI
         let srcString; //to ve saved to the log file
         if (eventData.src === 'tx') {
             srcObject = { id: false, name: 'txAdmin' };
             srcString = 'txAdmin';
 
-        } else if (typeof eventData.src === 0) {
-            srcObject = { id: false, name: 'CONSOLE' };
-            srcString = 'CONSOLE';
-
         } else if (typeof eventData.src === 'number' && eventData.src > 0) {
-            const player = globals.playerlistManager.getPlayerById(eventData.src);
+            const player = txCore.fxPlayerlist.getPlayerById(eventData.src);
             if (player) {
                 //FIXME: playermutex must be a ServerPlayer prop, already considering mutex, netid and rollover
                 const playerID = `${mutex}#${eventData.src}`;
@@ -182,17 +180,20 @@ export default class ServerLogger extends LoggerBase {
             srcString = 'UNKNOWN';
         }
 
-
-        //Process event types (except playerJoining)
+        //Process event types
         //TODO: normalize/padronize actions
         let eventMessage; //to be sent to the UI + saved to the log
         if (eventData.type === 'playerJoining') {
-            const idsString = eventData?.data?.ids.join('; ') ?? '';
-            eventMessage = `joined with identifiers [${idsString}]`;
+            const idsString = summarizeIdsArray(eventData?.data?.ids);
+            eventMessage = `joined with identifiers ${idsString}`;
 
         } else if (eventData.type === 'playerDropped') {
             const reason = eventData.data.reason || 'UNKNOWN REASON';
             eventMessage = `disconnected (${reason})`;
+
+        } else if (eventData.type === 'playerJoinDenied') {
+            const reason = eventData.data.reason ?? 'UNKNOWN REASON';
+            eventMessage = `player join denied due to ${reason}`;
 
         } else if (eventData.type === 'ChatMessage') {
             const text = (typeof eventData.data.text === 'string') ? eventData.data.text.replace(/\^([0-9])/g, '') : 'unknown message';
@@ -203,7 +204,7 @@ export default class ServerLogger extends LoggerBase {
         } else if (eventData.type === 'DeathNotice') {
             const cause = eventData.data.cause || 'unknown';
             if (typeof eventData.data.killer === 'number' && eventData.data.killer > 0) {
-                const killer = globals.playerlistManager.getPlayerById(eventData.data.killer);
+                const killer = txCore.fxPlayerlist.getPlayerById(eventData.data.killer);
                 if (killer) {
                     eventMessage = `died from ${cause} by ${killer.displayName}`;
                 } else {
@@ -223,9 +224,9 @@ export default class ServerLogger extends LoggerBase {
 
         } else if (eventData.type === 'LoggerStarted') {
             eventMessage = 'Logger started';
-            globals?.statsManager.playerDrop.handleServerBootData(eventData.data);
+            txCore.metrics.playerDrop.handleServerBootData(eventData.data);
             if (typeof eventData.data?.projectName === 'string' && eventData.data.projectName.length) {
-                globals?.persistentCache.set('fxsRuntime:projectName', eventData.data.projectName);
+                txCore.cacheStore.set('fxsRuntime:projectName', eventData.data.projectName);
             }
 
         } else if (eventData.type === 'DebugMessage') {
@@ -234,7 +235,7 @@ export default class ServerLogger extends LoggerBase {
                 : 'Debug Message: unknown';
 
         } else if (eventData.type === 'MenuEvent') {
-            globals?.statsManager.txRuntime.menuCommands.count(eventData.data?.action ?? 'unknown');
+            txCore.metrics.txRuntime.menuCommands.count(eventData.data?.action ?? 'unknown');
             eventMessage = (typeof eventData.data.message === 'string')
                 ? `${eventData.data.message}`
                 : 'did unknown action';

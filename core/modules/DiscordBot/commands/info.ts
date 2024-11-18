@@ -1,6 +1,5 @@
 const modulename = 'DiscordBot:cmd:info';
 import { APIEmbedField, CommandInteraction, EmbedBuilder, EmbedData } from 'discord.js';
-import TxAdmin from '@core/txAdmin';
 import { parsePlayerId } from '@lib/player/idUtils';
 import { embedder } from '../discordHelpers';
 import { findPlayersByIdentifier } from '@lib/player/playerFinder';
@@ -28,17 +27,17 @@ const humanizer = humanizeDuration.humanizer({
 
 const footer = {
     iconURL: 'https://cdn.discordapp.com/emojis/1062339910654246964.webp?size=96&quality=lossless',
-    text: `txAdmin ${txEnv.txAdminVersion}`,
+    text: `txAdmin ${txEnv.txaVersion}`,
 }
 
 
 /**
  * Handler for /info
  */
-export default async (interaction: CommandInteraction, txAdmin: TxAdmin) => {
+export default async (interaction: CommandInteraction) => {
     const tsToLocaleDate = (ts: number) => {
         return new Date(ts * 1000).toLocaleDateString(
-            txAdmin.translator.canonical,
+            txCore.translator.canonical,
             { dateStyle: 'long' }
         );
     }
@@ -48,7 +47,7 @@ export default async (interaction: CommandInteraction, txAdmin: TxAdmin) => {
     //@ts-ignore: somehow vscode is resolving interaction as CommandInteraction
     const adminInfoFlag = interaction.options.getBoolean('admininfo');
     if (adminInfoFlag) {
-        const admin = txAdmin.adminVault.getAdminByProviderUID(interaction.user.id);
+        const admin = txCore.adminStore.getAdminByProviderUID(interaction.user.id);
         if (!admin) {
             return await interaction.reply(embedder.danger('You cannot use the `admininfo` option if you are not a txAdmin admin.'));
         } else {

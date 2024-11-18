@@ -86,7 +86,7 @@ async function handleAdd(ctx: AuthedCtx) {
         try {
             if (consts.validIdentifiers.fivem.test(citizenfxID)) {
                 const id = citizenfxID.split(':')[1];
-                const res = await got(`https://policy-live.fivem.net/api/getUserInfo/${id}`, cfxHttpReqOptions).json();
+                const res = await got(`https://policy-live.fivem.net/api/getUserInfo/${id}`, cfxHttpReqOptions).json<any>();
                 if (!res.username || !res.username.length) {
                     return ctx.send({type: 'danger', message: 'Invalid CitizenFX ID1'});
                 }
@@ -95,7 +95,7 @@ async function handleAdd(ctx: AuthedCtx) {
                     identifier: citizenfxID,
                 };
             } else if (citizenfxIDRegex.test(citizenfxID)) {
-                const res = await got(`https://forum.cfx.re/u/${citizenfxID}.json`, cfxHttpReqOptions).json();
+                const res = await got(`https://forum.cfx.re/u/${citizenfxID}.json`, cfxHttpReqOptions).json<any>();
                 if (!res.user || typeof res.user.id !== 'number') {
                     return ctx.send({type: 'danger', message: 'Invalid CitizenFX ID2'});
                 }
@@ -136,7 +136,7 @@ async function handleAdd(ctx: AuthedCtx) {
 
     //Add admin and give output
     try {
-        await ctx.txAdmin.adminVault.addAdmin(name, citizenfxData, discordData, password, permissions);
+        await txCore.adminStore.addAdmin(name, citizenfxData, discordData, password, permissions);
         ctx.admin.logAction(`Adding admin '${name}'.`);
         return ctx.send({type: 'showPassword', password});
     } catch (error) {
@@ -184,7 +184,7 @@ async function handleEdit(ctx: AuthedCtx) {
         try {
             if (consts.validIdentifiers.fivem.test(citizenfxID)) {
                 const id = citizenfxID.split(':')[1];
-                const res = await got(`https://policy-live.fivem.net/api/getUserInfo/${id}`, cfxHttpReqOptions).json();
+                const res = await got(`https://policy-live.fivem.net/api/getUserInfo/${id}`, cfxHttpReqOptions).json<any>();
                 if (!res.username || !res.username.length) {
                     return ctx.send({type: 'danger', message: '(ERR1) Invalid CitizenFX ID'});
                 }
@@ -193,7 +193,7 @@ async function handleEdit(ctx: AuthedCtx) {
                     identifier: citizenfxID,
                 };
             } else if (citizenfxIDRegex.test(citizenfxID)) {
-                const res = await got(`https://forum.cfx.re/u/${citizenfxID}.json`, cfxHttpReqOptions).json();
+                const res = await got(`https://forum.cfx.re/u/${citizenfxID}.json`, cfxHttpReqOptions).json<any>();
                 if (!res.user || typeof res.user.id !== 'number') {
                     return ctx.send({type: 'danger', message: '(ERR2) Invalid CitizenFX ID'});
                 }
@@ -223,7 +223,7 @@ async function handleEdit(ctx: AuthedCtx) {
     }
 
     //Check if admin exists
-    const admin = ctx.txAdmin.adminVault.getAdminByName(name);
+    const admin = txCore.adminStore.getAdminByName(name);
     if (!admin) return ctx.send({type: 'danger', message: 'Admin not found.'});
 
     //Check if editing an master admin
@@ -244,7 +244,7 @@ async function handleEdit(ctx: AuthedCtx) {
 
     //Add admin and give output
     try {
-        await ctx.txAdmin.adminVault.editAdmin(name, null, citizenfxData, discordData, permissions);
+        await txCore.adminStore.editAdmin(name, null, citizenfxData, discordData, permissions);
         ctx.admin.logAction(`Editing user '${name}'.`);
         return ctx.send({type: 'success', refresh: true});
     } catch (error) {
@@ -269,7 +269,7 @@ async function handleDelete(ctx: AuthedCtx) {
     }
 
     //Check if admin exists
-    const admin = ctx.txAdmin.adminVault.getAdminByName(name);
+    const admin = txCore.adminStore.getAdminByName(name);
     if (!admin) return ctx.send({type: 'danger', message: 'Admin not found.'});
 
     //Check if editing an master admin
@@ -279,7 +279,7 @@ async function handleDelete(ctx: AuthedCtx) {
 
     //Delete admin and give output
     try {
-        await ctx.txAdmin.adminVault.deleteAdmin(name);
+        await txCore.adminStore.deleteAdmin(name);
         ctx.admin.logAction(`Deleting user '${name}'.`);
         return ctx.send({type: 'success', refresh: true});
     } catch (error) {

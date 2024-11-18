@@ -5,25 +5,20 @@ import Polyglot from 'node-polyglot';
 import { txEnv } from '@core/globalData';
 import localeMap from '@shared/localeMap';
 import consoleFactory from '@lib/console';
-import TxAdmin from '@core/txAdmin';
+import fatalError from '@lib/fatalError';
 const console = consoleFactory(modulename);
 
 
-
 /**
- * Small translation module built around Polyglot.js.
- * For the future, its probably a good idea to upgrade to i18next
+ * Translation module built around Polyglot.js.
+ * The locale files are indexed by the localeMap in the shared folder.
  */
 export default class Translator {
-    readonly #txAdmin: TxAdmin;
-    language: string;
     canonical: string = 'en-GB';
     readonly customLocalePath: string;
     #polyglot: Polyglot | null = null;
 
-    constructor(txAdmin: TxAdmin) {
-        this.#txAdmin = txAdmin;
-        this.language = txAdmin.globalConfig.language;
+    constructor() {
         this.customLocalePath = path.join(txEnv.dataPath, 'locale.json');
 
         //Load language
@@ -36,13 +31,13 @@ export default class Translator {
      */
     setupTranslator(isFirstTime = false) {
         try {
-            this.canonical = Intl.getCanonicalLocales(this.language.replace(/_/g, '-'))[0];
+            this.canonical = Intl.getCanonicalLocales(txConfig.global.language.replace(/_/g, '-'))[0];
         } catch (error) {
             this.canonical = 'en-GB';
         }
 
         try {
-            const phrases = this.getLanguagePhrases(this.language);
+            const phrases = this.getLanguagePhrases(txConfig.global.language);
             const polyglotOptions = {
                 allowMissing: false,
                 onMissingKey: (key: string) => {
@@ -53,8 +48,11 @@ export default class Translator {
             };
             this.#polyglot = new Polyglot(polyglotOptions);
         } catch (error) {
-            console.dir(error);
-            if (isFirstTime) process.exit(5200);
+            if (isFirstTime) {
+                fatalError.Translator(0, 'Failed to load initial language file', error);
+            } else {
+                console.dir(error);
+            }
         }
     }
 
@@ -64,12 +62,11 @@ export default class Translator {
      */
     refreshConfig() {
         //Change config and restart polyglot
-        this.language = this.#txAdmin.globalConfig.language;
         this.setupTranslator(false);
 
         //Rebuild Monitor's schedule with new text and refreshes fxserver convars
         try {
-            this.#txAdmin.fxRunner.resetConvars();
+            txCore.fxRunner.resetConvars();
         } catch (error) {
             console.verbose.dir(error);
         }
@@ -107,7 +104,7 @@ export default class Translator {
      * Perform a translation (polyglot.t)
      */
     t(key: string, options = {}) {
-        if(!this.#polyglot) throw new Error(`polyglot not yet loaded`);
+        if (!this.#polyglot) throw new Error(`polyglot not yet loaded`);
 
         try {
             return this.#polyglot.t(key, options);

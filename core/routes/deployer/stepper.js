@@ -1,7 +1,8 @@
 const modulename = 'WebServer:DeployerStepper';
 import fse from 'fs-extra';
-import { convars, txDevEnv } from '@core/globalData';
+import { convars, txDevEnv, txEnv } from '@core/globalData';
 import consoleFactory from '@lib/console';
+import { TxConfigState } from '@shared/enums';
 const console = consoleFactory(modulename);
 
 
@@ -15,45 +16,46 @@ export default async function DeployerStepper(ctx) {
         return ctx.utils.render('main/message', { message: 'You need to be the admin master to use the deployer.' });
     }
 
-    //Check if this is the correct state for the deployer
-    if (globals.deployer == null) {
-        const redirPath = (!globals.fxRunner.config.cfgPath || !globals.fxRunner.config.serverDataPath)
-            ? '/server/setup'
-            : '/';
-        return ctx.utils.legacyNavigateToPage(redirPath);
+    //Ensure the correct state for the deployer
+    if(txManager.configState === TxConfigState.Setup) {
+        return ctx.utils.legacyNavigateToPage('/server/setup');
+    } else if(txManager.configState !== TxConfigState.Deployer) {
+        return ctx.utils.legacyNavigateToPage('/');
+    } else if(!txManager.deployer?.step){
+        throw new Error(`txManager.configState is Deployer but txManager.deployer is not defined`);
     }
 
     //Prepare Output
     const renderData = {
-        step: globals.deployer.step,
-        serverProfile: globals.info.serverProfile,
-        deploymentID: globals.deployer.deploymentID,
+        step: txManager.deployer.step,
+        serverProfile: txEnv.profile,
+        deploymentID: txManager.deployer.deploymentID,
         requireDBConfig: false,
         defaultLicenseKey: '',
         recipe: undefined,
         defaults: {},
     };
 
-    if (globals.deployer.step === 'review') {
+    if (txManager.deployer.step === 'review') {
         renderData.recipe = {
-            isTrustedSource: globals.deployer.isTrustedSource,
-            name: globals.deployer.recipe.name,
-            author: globals.deployer.recipe.author,
-            description: globals.deployer.recipe.description,
-            raw: globals.deployer.recipe.raw,
+            isTrustedSource: txManager.deployer.isTrustedSource,
+            name: txManager.deployer.recipe.name,
+            author: txManager.deployer.recipe.author,
+            description: txManager.deployer.recipe.description,
+            raw: txManager.deployer.recipe.raw,
         };
-    } else if (globals.deployer.step === 'input') {
+    } else if (txManager.deployer.step === 'input') {
         renderData.defaultLicenseKey = txDevEnv.CFXKEY ?? '';
-        renderData.requireDBConfig = globals.deployer.recipe.requireDBConfig;
+        renderData.requireDBConfig = txManager.deployer.recipe.requireDBConfig;
         if (convars.deployerDefaults) {
             renderData.defaults = {
                 autofilled: true,
-                license: convars.deployerDefaults.license || '',
-                mysqlHost: convars.deployerDefaults.mysqlHost || 'localhost',
-                mysqlPort: convars.deployerDefaults.mysqlPort || '3306',
-                mysqlUser: convars.deployerDefaults.mysqlUser || 'root',
-                mysqlPassword: convars.deployerDefaults.mysqlPassword || '',
-                mysqlDatabase: convars.deployerDefaults.mysqlDatabase || globals.deployer.deploymentID,
+                license: convars.deployerDefaults.license ?? '',
+                mysqlHost: convars.deployerDefaults.mysqlHost ?? 'localhost',
+                mysqlPort: convars.deployerDefaults.mysqlPort ?? '3306',
+                mysqlUser: convars.deployerDefaults.mysqlUser ?? 'root',
+                mysqlPassword: convars.deployerDefaults.mysqlPassword ?? '',
+                mysqlDatabase: convars.deployerDefaults.mysqlDatabase ?? txManager.deployer.deploymentID,
             };
         } else {
             renderData.defaults = {
@@ -63,14 +65,14 @@ export default async function DeployerStepper(ctx) {
                 mysqlUser: 'root',
                 mysqlPort: '3306',
                 mysqlPassword: '',
-                mysqlDatabase: globals.deployer.deploymentID,
+                mysqlDatabase: txManager.deployer.deploymentID,
             };
         }
 
         const knownVarDescriptions = {
             steam_webApiKey: 'The Steam Web API Key is used to authenticate players when they join.<br/>\nYou can get one at https://steamcommunity.com/dev/apikey.',
         }
-        const recipeVars = globals.deployer.getRecipeVars();
+        const recipeVars = txManager.deployer.getRecipeVars();
         renderData.inputVars = Object.keys(recipeVars).map((name) => {
             return {
                 name: name,
@@ -78,16 +80,16 @@ export default async function DeployerStepper(ctx) {
                 description: knownVarDescriptions[name] || '',
             };
         });
-    } else if (globals.deployer.step === 'run') {
-        renderData.deployPath = globals.deployer.deployPath;
-    } else if (globals.deployer.step === 'configure') {
+    } else if (txManager.deployer.step === 'run') {
+        renderData.deployPath = txManager.deployer.deployPath;
+    } else if (txManager.deployer.step === 'configure') {
         const errorMessage = `# server.cfg Not Found!
 # This probably means you deleted it before pressing "Next".
 # Press cancel and start the deployer again,
 # or insert here the server.cfg contents.
 # (╯°□°）╯︵ ┻━┻`;
         try {
-            renderData.serverCFG = await fse.readFile(`${globals.deployer.deployPath}/server.cfg`, 'utf8');
+            renderData.serverCFG = await fse.readFile(`${txManager.deployer.deployPath}/server.cfg`, 'utf8');
             if (renderData.serverCFG == '#save_attempt_please_ignore' || !renderData.serverCFG.length) {
                 renderData.serverCFG = errorMessage;
             } else if (renderData.serverCFG.length > 10240) { //10kb

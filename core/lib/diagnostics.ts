@@ -3,11 +3,11 @@ import os from 'node:os';
 import humanizeDuration, { HumanizerOptions } from 'humanize-duration';
 import got from '@lib/got';
 import getOsDistro from '@lib/host/getOsDistro.js';
+import getHostUsage from '@lib/host/getHostUsage';
 import pidUsageTree from '@lib/host/pidUsageTree.js';
 import { txEnv } from '@core/globalData';
 import si from 'systeminformation';
 import consoleFactory from '@lib/console';
-import TxAdmin from '@core/txAdmin';
 import { parseFxserverVersion } from '@lib/fxserver/fxsVersionParser';
 import { getHeapStatistics } from 'node:v8';
 import bytes from 'bytes';
@@ -42,7 +42,7 @@ type HostDataReturnType = {
     static: HostStaticDataType,
     dynamic?: HostDynamicDataType
 } | { error: string };
-let hostStaticDataCache: HostStaticDataType;
+let _hostStaticDataCache: HostStaticDataType;
 
 
 /**
@@ -120,19 +120,17 @@ export const getProcessesData = async () => {
 /**
  * Gets the FXServer Data.
  */
-export const getFXServerData = async (txAdmin: TxAdmin) => {
+export const getFXServerData = async () => {
     //Sanity Check
-    if (txAdmin.fxRunner.fxChild === null || txAdmin.fxRunner.fxServerHost === null) {
+    if (txCore.fxRunner.fxChild === null || txCore.fxRunner.fxServerHost === null) {
         return { error: 'Server Offline' };
     }
 
     //Preparing request
     const requestOptions = {
-        url: `http://${txAdmin.fxRunner.fxServerHost}/info.json`,
+        url: `http://${txCore.fxRunner.fxServerHost}/info.json`,
         maxRedirects: 0,
-        timeout: {
-            request: txAdmin.healthMonitor.hardConfigs.timeout
-        },
+        timeout: { request: 1500 },
         retry: { limit: 0 },
     };
 
@@ -154,7 +152,7 @@ export const getFXServerData = async (txAdmin: TxAdmin) => {
             statusColor: 'success',
             status: ' ONLINE ',
             version: ver.valid ? `${ver.platform}:${ver.branch}:${ver.build}` : `${ver.platform ?? 'unknown'}:INVALID`,
-            versionMismatch: (ver.build !== txEnv.fxServerVersion),
+            versionMismatch: (ver.build !== txEnv.fxsVersion),
             resources: infoData.resources.length,
             onesync: (infoData.vars && infoData.vars.onesync_enabled === 'true') ? 'enabled' : 'disabled',
             maxClients: (infoData.vars && infoData.vars.sv_maxClients) ? infoData.vars.sv_maxClients : '--',
@@ -172,29 +170,18 @@ export const getFXServerData = async (txAdmin: TxAdmin) => {
 /**
  * Gets the Host Data.
  */
-export const getHostData = async (txAdmin: TxAdmin): Promise<HostDataReturnType> => {
-    const tmpDurationDebugLog = (msg: string) => {
-        // @ts-expect-error
-        if (globals?.tmpSetHbDataTracking) {
-            console.verbose.debug(`refreshHbData: ${msg}`);
-        }
-    }
-
+export const getHostData = async (): Promise<HostDataReturnType> => {
     //Get and cache static information
-    tmpDurationDebugLog('started');
-    if (!hostStaticDataCache) {
-        tmpDurationDebugLog('filling host static data cache');
+    if (!_hostStaticDataCache) {
         //This errors out on pterodactyl egg
         let osUsername = 'unknown';
         try {
             const userInfo = os.userInfo();
-            tmpDurationDebugLog('got userInfo');
             osUsername = userInfo.username;
         } catch (error) { }
 
         try {
             const cpuStats = await si.cpu();
-            tmpDurationDebugLog('got cpu');
             const cpuSpeed = cpuStats.speedMin || cpuStats.speed;
 
             //TODO: move this to frontend
@@ -207,7 +194,7 @@ export const getHostData = async (txAdmin: TxAdmin): Promise<HostDataReturnType>
                 }
             }
 
-            hostStaticDataCache = {
+            _hostStaticDataCache = {
                 nodeVersion: process.version,
                 username: osUsername,
                 osDistro: await getOsDistro(),
@@ -221,7 +208,6 @@ export const getHostData = async (txAdmin: TxAdmin): Promise<HostDataReturnType>
                     clockWarning,
                 }
             }
-            tmpDurationDebugLog('finished');
         } catch (error) {
             console.error('Error getting Host static data.');
             console.verbose.dir(error);
@@ -231,10 +217,13 @@ export const getHostData = async (txAdmin: TxAdmin): Promise<HostDataReturnType>
 
     //Get dynamic info (mem/cpu usage) and prepare output
     try {
-        const stats = txAdmin.healthMonitor.hostStats;
+        const stats = await Promise.race([
+            getHostUsage(),
+            new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2500))
+        ]);
         if (stats) {
             return {
-                static: hostStaticDataCache,
+                static: _hostStaticDataCache,
                 dynamic: {
                     cpuUsage: stats.cpu.usage,
                     memory: {
@@ -246,7 +235,7 @@ export const getHostData = async (txAdmin: TxAdmin): Promise<HostDataReturnType>
             };
         } else {
             return {
-                static: hostStaticDataCache,
+                static: _hostStaticDataCache,
             };
         }
     } catch (error) {
@@ -261,23 +250,23 @@ export const getHostData = async (txAdmin: TxAdmin): Promise<HostDataReturnType>
  * Gets the Host Static Data from cache.
  */
 export const getHostStaticData = (): HostStaticDataType => {
-    if (!hostStaticDataCache) {
+    if (!_hostStaticDataCache) {
         throw new Error(`hostStaticDataCache not yet ready`);
     }
-    return hostStaticDataCache;
+    return _hostStaticDataCache;
 }
 
 
 /**
  * Gets txAdmin Data
  */
-export const getTxAdminData = async (txAdmin: TxAdmin) => {
+export const getTxAdminData = async () => {
     const humanizeOptions: HumanizerOptions = {
         round: true,
         units: ['d', 'h', 'm'],
     };
 
-    const stats = txAdmin.statsManager.txRuntime; //shortcut
+    const stats = txCore.metrics.txRuntime; //shortcut
     const memoryUsage = getHeapStatistics();
 
     return {
@@ -297,14 +286,14 @@ export const getTxAdminData = async (txAdmin: TxAdmin) => {
         historyTableSearchTime: stats.historyTableSearchTime.resultSummary('ms').summary,
 
         //Log stuff:
-        logStorageSize: (await txAdmin.logger.getStorageSize()).total,
-        loggerStatusAdmin: txAdmin.logger.admin.getUsageStats(),
-        loggerStatusFXServer: txAdmin.logger.fxserver.getUsageStats(),
-        loggerStatusServer: txAdmin.logger.server.getUsageStats(),
+        logStorageSize: (await txCore.logger.getStorageSize()).total,
+        loggerStatusAdmin: txCore.logger.admin.getUsageStats(),
+        loggerStatusFXServer: txCore.logger.fxserver.getUsageStats(),
+        loggerStatusServer: txCore.logger.server.getUsageStats(),
 
         //Env stuff
         fxServerPath: txEnv.fxServerPath,
-        fxServerHost: txAdmin.fxRunner.fxServerHost ?? '--',
+        fxServerHost: txCore.fxRunner.fxServerHost ?? '--',
 
         //Usage stuff
         memoryUsage: {

@@ -20,7 +20,7 @@ export type ApiVerifyPasswordReqSchema = z.infer<typeof bodySchema>;
 export default async function AuthVerifyPassword(ctx: InitializedCtx) {
     //Check UI version
     const { uiVersion } = ctx.request.query;
-    if(uiVersion && uiVersion !== txEnv.txAdminVersion){
+    if(uiVersion && uiVersion !== txEnv.txaVersion){
         return ctx.send<ApiVerifyPasswordResp>({
             error: `refreshToUpdate`,
         });
@@ -36,7 +36,7 @@ export default async function AuthVerifyPassword(ctx: InitializedCtx) {
     const postBody = schemaRes.data;
 
     //Check if there are already admins set up
-    if (!ctx.txAdmin.adminVault.hasAdmins()) {
+    if (!txCore.adminStore.hasAdmins()) {
         return ctx.send<ApiVerifyPasswordResp>({
             error: `no_admins_setup`,
         });
@@ -44,7 +44,7 @@ export default async function AuthVerifyPassword(ctx: InitializedCtx) {
 
     try {
         //Checking admin
-        const vaultAdmin = ctx.txAdmin.adminVault.getAdminByName(postBody.username);
+        const vaultAdmin = txCore.adminStore.getAdminByName(postBody.username);
         if (!vaultAdmin) {
             console.warn(`Wrong username from: ${ctx.ip}`);
             return ctx.send<ApiVerifyPasswordResp>({
@@ -64,15 +64,15 @@ export default async function AuthVerifyPassword(ctx: InitializedCtx) {
             username: vaultAdmin.name,
             password_hash: vaultAdmin.password_hash,
             expiresAt: false,
-            csrfToken: ctx.txAdmin.adminVault.genCsrfToken(),
+            csrfToken: txCore.adminStore.genCsrfToken(),
         } satisfies PassSessAuthType;
         ctx.sessTools.set({ auth: sessData });
 
-        ctx.txAdmin.logger.admin.write(vaultAdmin.name, `logged in from ${ctx.ip} via password`);
-        ctx.txAdmin.statsManager.txRuntime.loginOrigins.count(ctx.txVars.hostType);
-        ctx.txAdmin.statsManager.txRuntime.loginMethods.count('password');
+        txCore.logger.admin.write(vaultAdmin.name, `logged in from ${ctx.ip} via password`);
+        txCore.metrics.txRuntime.loginOrigins.count(ctx.txVars.hostType);
+        txCore.metrics.txRuntime.loginMethods.count('password');
 
-        const authedAdmin = new AuthedAdmin(ctx.txAdmin, vaultAdmin, sessData.csrfToken)
+        const authedAdmin = new AuthedAdmin(vaultAdmin, sessData.csrfToken)
         return ctx.send<ReactAuthDataType>(authedAdmin.getAuthData());
 
     } catch (error) {

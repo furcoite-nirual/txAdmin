@@ -19,30 +19,28 @@ const genMutex = customAlphabet(dict49, 5);
 
 
 //Helpers
-const escape = (x) => x.toString().replace(/"/g, '\uff02');
-const formatCommand = (cmd, ...params) => {
-    return `${cmd} "` + [...params].map(escape).join('" "') + '"';
-};
 const getMutableConvars = (isCmdLine = false) => {
-    const playerDbConfigs = globals.playerDatabase.config;
-    const checkPlayerJoin = (playerDbConfigs.onJoinCheckBan || playerDbConfigs.whitelistMode !== 'disabled');
+    const checkPlayerJoin = (
+        txConfig.playerDatabase.onJoinCheckBan
+        || txConfig.playerDatabase.whitelistMode !== 'disabled'
+    );
 
     //type, name, value
     const convars = [
-        ['set', 'txAdmin-serverName', globals.txAdmin.globalConfig.serverName ?? 'txAdmin'],
-        ['setr', 'txAdmin-locale', globals.translator.language ?? 'en'],
-        ['set', 'txAdmin-localeFile', globals.translator.customLocalePath ?? 'false'],
+        ['set', 'txAdmin-serverName', txConfig.global.serverName ?? 'txAdmin'],
+        ['setr', 'txAdmin-locale', txConfig.global.language ?? 'en'],
+        ['set', 'txAdmin-localeFile', txCore.translator.customLocalePath ?? false],
         ['setr', 'txAdmin-verbose', console.isVerbose],
         ['set', 'txAdmin-checkPlayerJoin', checkPlayerJoin],
-        ['set', 'txAdmin-menuAlignRight', globals.txAdmin.globalConfig.menuAlignRight],
-        ['set', 'txAdmin-menuPageKey', globals.txAdmin.globalConfig.menuPageKey],
-        ['set', 'txAdmin-hideAdminInPunishments', globals.txAdmin.globalConfig.hideAdminInPunishments],
-        ['set', 'txAdmin-hideAdminInMessages', globals.txAdmin.globalConfig.hideAdminInMessages],
-        ['set', 'txAdmin-hideDefaultAnnouncement', globals.txAdmin.globalConfig.hideDefaultAnnouncement],
-        ['set', 'txAdmin-hideDefaultDirectMessage', globals.txAdmin.globalConfig.hideDefaultDirectMessage],
-        ['set', 'txAdmin-hideDefaultWarning', globals.txAdmin.globalConfig.hideDefaultWarning],
-        ['set', 'txAdmin-hideDefaultScheduledRestartWarning', globals.txAdmin.globalConfig.hideDefaultScheduledRestartWarning],
-    ];
+        ['set', 'txAdmin-menuAlignRight', txConfig.global.menuAlignRight],
+        ['set', 'txAdmin-menuPageKey', txConfig.global.menuPageKey],
+        ['set', 'txAdmin-hideAdminInPunishments', txConfig.global.hideAdminInPunishments],
+        ['set', 'txAdmin-hideAdminInMessages', txConfig.global.hideAdminInMessages],
+        ['set', 'txAdmin-hideDefaultAnnouncement', txConfig.global.hideDefaultAnnouncement],
+        ['set', 'txAdmin-hideDefaultDirectMessage', txConfig.global.hideDefaultDirectMessage],
+        ['set', 'txAdmin-hideDefaultWarning', txConfig.global.hideDefaultWarning],
+        ['set', 'txAdmin-hideDefaultScheduledRestartWarning', txConfig.global.hideDefaultScheduledRestartWarning],
+    ]; //satisfies [set: string, name: string, value: any][]
 
     const prefix = isCmdLine ? '+' : '';
     return convars.map((c) => ([
@@ -65,12 +63,14 @@ const chanEventBlackHole = (...args) => {
     }
 };
 
-export default class FXRunner {
-    constructor(txAdmin, config) {
-        this.config = config;
 
+/**
+ * Module responsible for handling the FXServer process.
+ */
+export default class FxRunner {
+    constructor() {
         //Checking config validity
-        if (this.config.shutdownNoticeDelay < 0 || this.config.shutdownNoticeDelay > 30) {
+        if (txConfig.fxRunner.shutdownNoticeDelay < 0 || txConfig.fxRunner.shutdownNoticeDelay > 30) {
             throw new Error('The fxRunner.shutdownNoticeDelay setting must be between 0 and 30 seconds.');
         }
 
@@ -82,7 +82,7 @@ export default class FXRunner {
         this.fxServerHost = null;
         this.currentMutex = null;
         this.cfxId = null;
-        this.fd3Handler = new Fd3Handler(txAdmin);
+        this.fd3Handler = new Fd3Handler();
     }
 
 
@@ -90,7 +90,7 @@ export default class FXRunner {
      * Refresh fxRunner configurations
      */
     refreshConfig() {
-        this.config = globals.configVault.getScoped('fxRunner');
+        // ???
     }
 
 
@@ -98,13 +98,13 @@ export default class FXRunner {
      * Receives the signal that all the start banner was already printed and other modules loaded
      */
     signalStartReady() {
-        if (!this.config.autostart) return;
+        if (!txConfig.fxRunner.autostart) return;
 
-        if (this.config.serverDataPath === null || this.config.cfgPath === null) {
+        if (!this.isConfigured) {
             return console.warn('Please open txAdmin on the browser to configure your server.');
         }
 
-        if (!globals.adminVault?.hasAdmins()) {
+        if (!txCore.adminStore.hasAdmins()) {
             return console.warn('The server will not auto start because there are no admins configured.');
         }
 
@@ -118,8 +118,8 @@ export default class FXRunner {
     setupVariables() {
         // Prepare extra args
         let extraArgs = [];
-        if (typeof this.config.commandLine === 'string' && this.config.commandLine.length) {
-            extraArgs = parseArgsStringToArgv(this.config.commandLine);
+        if (typeof txConfig.fxRunner.commandLine === 'string' && txConfig.fxRunner.commandLine.length) {
+            extraArgs = parseArgsStringToArgv(txConfig.fxRunner.commandLine);
         }
 
         // Prepare default args (these convars can't change without restart)
@@ -129,13 +129,13 @@ export default class FXRunner {
         const cmdArgs = [
             getMutableConvars(true),
             extraArgs,
-            '+set', 'onesync', this.config.onesync,
-            '+sets', 'txAdmin-version', txEnv.txAdminVersion,
-            '+setr', 'txAdmin-menuEnabled', globals.txAdmin.globalConfig.menuEnabled,
+            '+set', 'onesync', txConfig.fxRunner.onesync,
+            '+sets', 'txAdmin-version', txEnv.txaVersion,
+            '+setr', 'txAdmin-menuEnabled', txConfig.global.menuEnabled,
             '+set', 'txAdmin-luaComHost', txAdminInterface,
-            '+set', 'txAdmin-luaComToken', globals.webServer.luaComToken,
+            '+set', 'txAdmin-luaComToken', txCore.webServer.luaComToken,
             '+set', 'txAdminServerMode', 'true', //Can't change this one due to fxserver code compatibility
-            '+exec', this.config.cfgPath,
+            '+exec', txConfig.fxRunner.cfgPath,
         ].flat(2);
 
         // Configure spawn parameters according to the environment
@@ -173,7 +173,7 @@ export default class FXRunner {
         }
 
         //Setup variables
-        globals.webServer.resetToken();
+        txCore.webServer.resetToken();
         this.currentMutex = genMutex();
         this.setupVariables();
         console.verbose.log('Spawn Variables: ' + this.spawnVariables.args.join(' '));
@@ -188,7 +188,7 @@ export default class FXRunner {
             return msg;
         }
         //If there is any FXServer configuration missing
-        if (this.config.serverDataPath === null || this.config.cfgPath === null) {
+        if (!this.isConfigured) {
             const msg = `Cannot start the server with missing configuration (serverDataPath || cfgPath).`;
             console.error(msg);
             return msg;
@@ -196,7 +196,7 @@ export default class FXRunner {
 
         //Validating server.cfg & configuration
         try {
-            const result = await validateFixServerConfig(this.config.cfgPath, this.config.serverDataPath);
+            const result = await validateFixServerConfig(txConfig.fxRunner.cfgPath, txConfig.fxRunner.serverDataPath);
             if (result.errors) {
                 const msg = `**Unable to start the server due to error(s) in your config file(s):**\n${result.errors}`;
                 console.error(msg);
@@ -220,10 +220,10 @@ export default class FXRunner {
         }
 
         //Reseting monitor stats
-        globals.healthMonitor.resetMonitorStats();
+        txCore.fxMonitor.resetMonitorStats();
 
         //Resetting frontend playerlist
-        globals.webServer.webSocket.buffer('playerlist', {
+        txCore.webServer.webSocket.buffer('playerlist', {
             mutex: this.currentMutex,
             type: 'fullPlayerlist',
             playerlist: [],
@@ -231,49 +231,41 @@ export default class FXRunner {
 
         //Announcing
         if (announce === 'true' || announce === true) {
-            globals.discordBot.sendAnnouncement({
+            txCore.discordBot.sendAnnouncement({
                 type: 'success',
                 description: {
                     key: 'server_actions.spawning_discord',
-                    data: { servername: globals.txAdmin.globalConfig.serverName },
+                    data: { servername: txConfig.global.serverName },
                 },
             });
         }
 
         //Starting server
-        let pid;
-        let historyIndex;
-        try {
-            this.fxChild = spawn(
-                this.spawnVariables.command,
-                this.spawnVariables.args,
-                {
-                    cwd: this.config.serverDataPath,
-                    stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
-                },
-            );
-            if (typeof this.fxChild.pid === 'undefined') {
-                throw new Error(`Executon of "${this.spawnVariables.command}" failed.`);
-            }
-            pid = this.fxChild.pid.toString();
-            console.ok(`>> [${pid}] FXServer Started!`);
-            globals.logger.fxserver.logFxserverBoot(pid);
-            this.history.push({
-                pid,
-                timestamps: {
-                    start: now(),
-                    kill: false,
-                    exit: false,
-                    close: false,
-                },
-            });
-            historyIndex = this.history.length - 1;
-            globals.webServer?.webSocket.pushRefresh('status');
-        } catch (error) {
-            console.error('Failed to start FXServer with the following error:');
-            console.dir(error);
-            process.exit(5400);
+        this.fxChild = spawn(
+            this.spawnVariables.command,
+            this.spawnVariables.args,
+            {
+                cwd: txConfig.fxRunner.serverDataPath,
+                stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+            },
+        );
+        if (typeof this.fxChild.pid === 'undefined') {
+            throw new Error(`Executon of "${this.spawnVariables.command}" failed.`);
         }
+        const pid = this.fxChild.pid.toString();
+        console.ok(`>> [${pid}] FXServer Started!`);
+        txCore.logger.fxserver.logFxserverBoot(pid);
+        this.history.push({
+            pid,
+            timestamps: {
+                start: now(),
+                kill: false,
+                exit: false,
+                close: false,
+            },
+        });
+        const historyIndex = this.history.length - 1;
+        txCore.webServer.webSocket.pushRefresh('status');
 
         //Setting up stream handlers
         this.fxChild.stdout.setEncoding('utf8');
@@ -288,7 +280,7 @@ export default class FXRunner {
             }
             console.warn(`>> [${pid}] FXServer Closed (${printableCode}).`);
             this.history[historyIndex].timestamps.close = now();
-            globals.webServer?.webSocket.pushRefresh('status');
+            txCore.webServer.webSocket.pushRefresh('status');
         }.bind(this));
         this.fxChild.on('disconnect', function () {
             console.warn(`>> [${pid}] FXServer Disconnected.`);
@@ -301,7 +293,7 @@ export default class FXRunner {
             process.stdout.write('\n'); //Make sure this isn't concatenated with the last line
             console.warn(`>> [${pid}] FXServer Exited.`);
             this.history[historyIndex].timestamps.exit = now();
-            globals.webServer?.webSocket.pushRefresh('status');
+            txCore.webServer.webSocket.pushRefresh('status');
             if (this.history[historyIndex].timestamps.exit - this.history[historyIndex].timestamps.start <= 5) {
                 setTimeout(() => {
                     console.warn('FXServer didn\'t start. This is not an issue with txAdmin.');
@@ -311,14 +303,14 @@ export default class FXRunner {
 
         //Default channel handlers
         this.fxChild.stdout.on('data',
-            globals.logger.fxserver.writeFxsOutput.bind(
-                globals.logger.fxserver,
+            txCore.logger.fxserver.writeFxsOutput.bind(
+                txCore.logger.fxserver,
                 ConsoleLineType.StdOut,
             ),
         );
         this.fxChild.stderr.on('data',
-            globals.logger.fxserver.writeFxsOutput.bind(
-                globals.logger.fxserver,
+            txCore.logger.fxserver.writeFxsOutput.bind(
+                txCore.logger.fxserver,
                 ConsoleLineType.StdErr,
             ),
         );
@@ -359,7 +351,7 @@ export default class FXRunner {
                 console.warn(`Restarting the fxserver with delay override ${this.restartDelayOverride}`);
                 await sleep(this.restartDelayOverride);
             } else {
-                await sleep(this.config.restartDelay);
+                await sleep(txConfig.fxRunner.restartDelay);
             }
 
             //Start server again :)
@@ -383,7 +375,7 @@ export default class FXRunner {
         try {
             //Prevent concurrent restart request
             const msTimestamp = Date.now();
-            if (msTimestamp - this.lastKillRequest < this.config.shutdownNoticeDelay * 1000) {
+            if (msTimestamp - this.lastKillRequest < txConfig.fxRunner.shutdownNoticeDelay * 1000) {
                 return 'Restart already in progress.';
             } else {
                 this.lastKillRequest = msTimestamp;
@@ -394,15 +386,15 @@ export default class FXRunner {
             const messageType = isRestarting ? 'restarting' : 'stopping';
             const messageColor = isRestarting ? 'warning' : 'danger';
             const tOptions = {
-                servername: globals.txAdmin.globalConfig.serverName,
+                servername: txConfig.global.serverName,
                 reason: reasonString,
             };
             this.sendEvent('serverShuttingDown', {
-                delay: this.config.shutdownNoticeDelay * 1000,
+                delay: txConfig.fxRunner.shutdownNoticeDelay * 1000,
                 author: author ?? 'txAdmin',
-                message: globals.translator.t(`server_actions.${messageType}`, tOptions),
+                message: txCore.translator.t(`server_actions.${messageType}`, tOptions),
             });
-            globals.discordBot.sendAnnouncement({
+            txCore.discordBot.sendAnnouncement({
                 type: messageColor,
                 description: {
                     key: `server_actions.${messageType}_discord`,
@@ -412,7 +404,7 @@ export default class FXRunner {
 
             //Awaiting restart delay
             //The 250 is so at least everyone is kicked from the server
-            await sleep(250 + this.config.shutdownNoticeDelay * 1000);
+            await sleep(250 + txConfig.fxRunner.shutdownNoticeDelay * 1000);
 
             //Stopping server
             if (this.fxChild !== null) {
@@ -420,9 +412,9 @@ export default class FXRunner {
                 this.fxChild = null;
                 this.history[this.history.length - 1].timestamps.kill = now();
             }
-            globals.resourcesManager.handleServerStop();
-            globals.playerlistManager.handleServerStop(this.currentMutex);
-            globals.statsManager.svRuntime.logServerClose(reasonString);
+            txCore.fxResources.handleServerStop();
+            txCore.fxPlayerlist.handleServerStop(this.currentMutex);
+            txCore.metrics.svRuntime.logServerClose(reasonString);
             return null;
         } catch (error) {
             const msg = `Couldn't kill the server. Perhaps What Is Dead May Never Die.`;
@@ -462,15 +454,9 @@ export default class FXRunner {
      * @param {object} data
      */
     sendEvent(eventType, data = {}) {
-        if (typeof eventType !== 'string') throw new Error('Expected eventType as String!');
+        if (typeof eventType !== 'string' || !eventType) throw new Error('invalid eventType');
         try {
-            const eventCommand = formatCommand(
-                'txaEvent',
-                eventType,
-                JSON.stringify(data),
-            );
-            // console.verbose.dir({ eventType, data});
-            return this.srvCmd(eventCommand);
+            return this.sendCommand('txaEvent', [eventType, data]);
         } catch (error) {
             console.verbose.error(`Error writing firing server event ${eventType}`);
             console.verbose.dir(error);
@@ -482,7 +468,7 @@ export default class FXRunner {
     /**
      * Formats and sends commands to fxserver's stdin.
      * @param {string} cmdName - The name of the command to send.
-     * @param {(string|Object)[]} [cmdArgs=[]] - The arguments for the command (optional).
+     * @param {(string|number|Object)[]} [cmdArgs=[]] - The arguments for the command (optional).
      * @param {string} [author] - The author of the command (optional).
      * @returns {boolean} Success status of the command.
      */
@@ -490,73 +476,61 @@ export default class FXRunner {
         if (this.fxChild === null) return false;
         if (typeof cmdName !== 'string' || !cmdName.length) throw new Error('cmdName is empty');
         if (!Array.isArray(cmdArgs)) throw new Error('cmdArgs is not an array');
+        //NOTE: technically fxserver accepts anything but space and ; in the command name
+        if (!/^\w+$/.test(cmdName)) {
+            throw new Error('invalid cmdName string');
+        }
 
         // Sanitize and format the command and arguments
         const sanitizeArgString = (x) => x.replaceAll(/"/g, '\uff02').replaceAll(/\n/g, ' ');
-        const rawInputParts = [sanitizeArgString(cmdName)];
+        let rawInput = sanitizeArgString(cmdName);
         for (const arg of cmdArgs) {
-            let argAsString;
             if (typeof arg === 'string') {
-                argAsString = arg;
+                if (!arg.length) {
+                    rawInput += ' ""';
+                } else if (/^\w+$/.test(arg)) {
+                    rawInput += ` ${arg}`;
+                } else {
+                    rawInput += ` "${sanitizeArgString(arg)}"`;
+                }
             } else if (typeof arg === 'object' && arg !== null) {
-                argAsString = JSON.stringify(arg);
+                rawInput += ` "${sanitizeArgString(JSON.stringify(arg))}"`;
+            } else if (typeof arg === 'number' && Number.isInteger(arg)) {
+                //everything ends up as string anyways
+                rawInput += ` ${arg}`;
             } else {
                 throw new Error('arg expected to be string or object');
             }
-            rawInputParts.push(`"${sanitizeArgString(argAsString)}"`);
         }
 
         // Send the command to the server
-        try {
-            const rawInputString = rawInputParts.join(' ');
-            const success = this.fxChild.stdin.write(rawInputString + '\n');
-            if (author) {
-                globals.logger.fxserver.logAdminCommand(author, rawInputString);
-            } else {
-                globals.logger.fxserver.logSystemCommand(rawInputString);
-            }
-            return success;
-        } catch (error) {
-            console.verbose.error('Error sending command to fxChild.stdin');
-            console.verbose.dir(error);
-            return false;
-        }
+        return this.sendRawCommand(rawInput, author);
     }
 
 
     /**
-     * Pipe a string into FXServer's stdin (aka executes a cfx's command)
-     * FIXME: deprecate this method in favor of this.sendCommand()
+     * Writes to fxchild's stdin.
+     * NOTE: do not send commands with \n at the end, this function will add it.
      * @param {string} command
+     * @param {string} [author]
      */
-    srvCmd(command, author) {
-        if (typeof command !== 'string') throw new Error('Expected String!');
+    sendRawCommand(command, author) {
+        if (typeof command !== 'string') throw new Error('Expected command as String!');
+        if (typeof author !== 'undefined' && typeof author !== 'string') throw new Error('Expected author as String!');
         if (this.fxChild === null) return false;
-        const sanitized = command.replaceAll(/\n/g, ' ');
         try {
-            const success = this.fxChild.stdin.write(sanitized + '\n');
+            const success = this.fxChild.stdin.write(command + '\n');
             if (author) {
-                globals.logger.fxserver.logAdminCommand(author, sanitized);
+                txCore.logger.fxserver.logAdminCommand(author, command);
             } else {
-                globals.logger.fxserver.logSystemCommand(sanitized);
+                txCore.logger.fxserver.logSystemCommand(command);
             }
             return success;
         } catch (error) {
-            console.verbose.error('Error writing to fxChild.stdin');
+            console.error('Error writing to fxChild\'s stdin.');
             console.verbose.dir(error);
             return false;
         }
-    }
-
-
-    /**
-     * Handles a live console command input
-     * @param {import('../WebServer/authLogic').AuthedAdminType} admin
-     * @param {string} command
-     */
-    liveConsoleCmdHandler(admin, command) {
-        admin.logCommand(command, 'command');
-        globals.fxRunner.srvCmd(command, admin.name);
     }
 
 
@@ -609,8 +583,16 @@ export default class FXRunner {
      */
     getUptime() {
         if (!this.history.length) return 0;
-        let curr = this.history[this.history.length - 1];
+        const curr = this.history[this.history.length - 1];
 
         return now() - curr.timestamps.start;
+    }
+
+
+    /**
+     * True if both the serverDataPath and cfgPath are configured
+     */
+    get isConfigured() {
+        return Boolean(txConfig.fxRunner.serverDataPath) && Boolean(txConfig.fxRunner.cfgPath);
     }
 };
